@@ -4,7 +4,7 @@ export function TopBar({ view, onToggleView, onChangeVault }: Readonly<{ view: "
       <div className="brand">
         <span className="brand-mark">W</span>
         <span>WONNYY</span>
-        <span className="version">AMADEUS 0.1</span>
+        <span className="version">ver 0.0.1</span>
       </div>
       <nav className="top-nav" aria-label="Primary">
         <button className="nav-item" onClick={onChangeVault}>
