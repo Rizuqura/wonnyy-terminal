@@ -597,6 +597,17 @@ works reliably.
 
 ## M7.2 — Context-Aware Model Request
 
+Status: **Complete — 2026-09-03**
+
+Implemented proof:
+
+* A main-process orchestrator creates a fresh run identity and owned Brain Scope for every request.
+* Exactly one unchanged Active Context Markdown source is read through the controlled source operation.
+* Prompt version `wonnyy-context-v1` separates system policy, untrusted source data, and the user question.
+* Invalid scope, type, count, authorization, expiry, content hash, and size conditions stop before the provider call.
+* The structured Qwen response returns only the validated answer with scope and source provenance.
+* The live isolated-vault proof returned `25%` and excluded a conflicting unrelated file.
+
 Goal:
 
 Connect Brain Scope to the model.
@@ -637,6 +648,15 @@ The model must not invent information outside the supplied context.
 ---
 
 ## M7.3 — Source Provenance
+
+Status: **Complete — 2026-09-03**
+
+Implemented:
+
+* Every successful context-aware result preserves the authorized source ID, relative path, and verified content hash.
+* Scope ID, scope mode, manifest version, and prompt version remain attached to the answer for later run recording.
+* Provenance comes from the controlled Brain Source read, not from provider output; provider-supplied source claims are overwritten.
+* Missing, changed, unauthorized, or manifest-mismatched sources cannot produce an attributed answer.
 
 Goal:
 
@@ -1170,7 +1190,7 @@ Recommended sequence:
 
 # 22. Immediate Target
 
-The next engineering target is:
+Completed foundation:
 
 ```text
 M7.0
@@ -1194,6 +1214,8 @@ One Markdown file
 → Answer
 → Provenance
 ```
+
+The next engineering target is **M7.4 — Model Run Record**, followed by visible chat execution in M7.5.
 
 Do not start with autonomous agents.
 

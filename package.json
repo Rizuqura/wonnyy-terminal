@@ -1,6 +1,6 @@
 {
   "name": "wonnyy-amadeus",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Local-first AI-native knowledge and research workspace",
   "private": true,
   "main": "electron/main.cjs",
@@ -13,7 +13,8 @@
     "start": "node electron/launch.cjs",
     "desktop:preview": "npm run build && node electron/launch.cjs",
     "desktop:dist": "npm run build && electron-builder",
-    "test": "node --experimental-strip-types --test electron/vault-service.test.cjs electron/station-service.test.cjs electron/ai/providers/ollama-provider.test.cjs lib/planet-layout.test.cjs lib/planet-hit-testing.test.cjs"
+    "test:m72:live": "node scripts/m72-live-proof.cjs",
+    "test": "node --experimental-strip-types --test electron/vault-service.test.cjs electron/station-service.test.cjs electron/ai/prompt-builder.test.cjs electron/ai/orchestrator.test.cjs electron/ai/providers/ollama-provider.test.cjs lib/planet-layout.test.cjs lib/planet-hit-testing.test.cjs"
   },
   "dependencies": {
     "next": "^16.0.0",

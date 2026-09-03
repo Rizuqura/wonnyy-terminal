@@ -1,14 +1,14 @@
-# Wonnyy V0.0.2 — Amadeus Preparation Checkpoint
+# Wonnyy V0.0.3 — Amadeus Context Checkpoint
 
 ## Release declaration
 
-**Wonnyy V0.0.2 — Amadeus Preparation Checkpoint** is the current project baseline as of **2026-09-03**.
+**Wonnyy V0.0.3 — Amadeus Context Checkpoint** is the current project baseline as of **2026-09-03**.
 
-Amadeus establishes Planet View as the authoritative map of knowledge that a future model may access. V0.0.2 is the checkpoint immediately before full context-aware local-model integration: Brain Scope errors and authorization boundaries have been hardened, local Ollama connectivity has been proven, and application branding has been tidied. The prototype chat is not yet connected to model execution, and no autonomous agent loop exists.
+Amadeus establishes Planet View as the authoritative map of knowledge that a future model may access. V0.0.3 proves the first secured context-aware local-model path: one approved Active Context Markdown source reaches Qwen through an owned Brain Scope, and every answer preserves verified source provenance. The prototype chat is not yet connected to model execution, and no autonomous agent loop exists.
 
 ## Current milestone
 
-**M7.1 — Local Ollama connectivity complete (2026-09-03).**
+**M7.3 — Source provenance complete (2026-09-03).**
 
 - Planet View now defines a deterministic effective Brain Scope: Active Context overrides active Station matches, which override the universal supported vault.
 - Scope preparation returns a content-free source manifest with provenance, hashes, Station membership, and token estimates. Opaque capabilities are owned by a specific run, expire after five minutes, and constrain controlled source reads in Electron.
@@ -20,7 +20,12 @@ Amadeus establishes Planet View as the authoritative map of knowledge that a fut
 - The isolated preload bridge exposes model status, installed-model listing, and a fixed connectivity test. The renderer still cannot send arbitrary prompts or vault content to Ollama.
 - Local Ollama `0.33.2` and the installed `qwen3:4b` model completed the structured connectivity proof with `WONNYY ONLINE`. The proof carried no Brain Scope, sources, tools, or filesystem authority.
 - Ollama responses and model listings receive runtime validation. Offline, missing-model, timeout, invalid-response, provider, and malformed-request cases use stable structured errors.
-- Provider-neutral request, response, message, source, and provider contracts are ready for a future local or remote model adapter. No provider is connected yet.
+- A provider-neutral Electron orchestrator now mints a fresh run-owned Brain Scope, requires exactly one approved Active Context Markdown source, and reads it only through the controlled source operation.
+- Prompt version `wonnyy-context-v1` keeps system policy, untrusted source data, and the user question in separate deterministic messages. Source text cannot grant permissions or alter Brain Scope.
+- M7.2 rejects Universe, Station, empty, multi-source, CSV, PDF, missing, changed, expired, unauthorized, oversized, and manifest-mismatched context before Ollama is called.
+- Qwen must return a validated structured answer. The orchestrator exposes only the parsed answer plus scope manifest version, source ID, relative path, and content hash.
+- The live isolated-vault proof returned `25%` from the approved Markdown file while excluding a conflicting unrelated vault file.
+- Answer provenance is derived only from the verified Brain Source read. Provider-supplied source claims cannot replace or add to the authoritative source list.
 - Active Stations render as separate named hubs with explicit hub-to-member lines. Shared objects connect to multiple hubs and settle between their context systems.
 
 ## Model-readiness audit
@@ -37,14 +42,12 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 
 ### Remaining before model execution
 
-1. Implement the AI orchestrator that binds the hardened Brain Scope to the provider adapter.
-2. Add prompt construction rules, source boundaries, prompt-injection handling, and auditable attribution tied to sources actually read.
+1. Record immutable model runs containing request, scope, prompt, provider, response, timing, error, and verified-source provenance.
+2. Present verified sources and connect the secured request path to the chat runtime with streaming, cancellation, retry policy, and structured lifecycle handling.
 3. Add provider-aware tokenization, context budgeting, chunking, and retrieval so large vaults and large CSV files are not read wholesale.
 4. Avoid sequentially hashing and estimating every file on the Electron main path for each universal scope preparation; introduce bounded or incremental indexing.
-5. Add chat streaming, cancellation, retry policy, and structured run lifecycle handling.
-6. Add size limits for Markdown and CSV, OCR or an explicit unreadable status for scanned PDFs, and accurate type handling for missing sources.
-7. Record immutable model runs containing scope identity, manifest version, sources actually read, provider/model configuration, and response provenance.
-8. Add secure provider configuration and secret handling before any remote provider is enabled.
+5. Add broader size policies, OCR or an explicit unreadable status for scanned PDFs, and accurate type handling for missing sources.
+6. Add secure provider configuration and secret handling before any remote provider is enabled.
 
 ## Known product boundary
 
@@ -67,9 +70,10 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 
 ## Verification at the Amadeus baseline
 
-- `npm test`: all 23 service, Brain Scope security, Ollama provider, layout, and hit-testing tests pass.
+- `npm test`: all 42 service, Brain Scope, prompt-builder, orchestrator, Ollama provider, layout, and hit-testing tests pass.
+- `npm run test:m72:live`: local `qwen3:4b` returns exactly `25%` from one approved Markdown source with source provenance.
 - `npm run build`: production build passes and includes the local PDF.js worker.
 
 ## Next intended milestone
 
-Begin **M7.2 — Context-Aware Model Request** with one explicitly approved Markdown source. Add the orchestrator and prompt-injection boundary, then prove that Qwen receives only that authorized content and returns its source identity and hash.
+Begin **M7.4 — Model Run Record** by recording an immutable representation of each AI execution without yet connecting general chat execution.
