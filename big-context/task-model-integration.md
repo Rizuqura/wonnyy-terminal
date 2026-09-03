@@ -695,6 +695,17 @@ Sources
 
 ## M7.4 — Model Run Record
 
+Status: **Complete — 2026-09-03**
+
+Implemented:
+
+* Every valid context-aware execution receives one run ID and a final `succeeded` or `failed` schema-versioned record.
+* Records are published exclusively under `.wonnyy/model-runs/<runId>.json`; concurrent writes cannot overwrite an existing run.
+* Success is returned only after its audit record is durable. Brain, model, and recording failures retain structured error data.
+* Records preserve timing, scope and manifest identity, provider/model, prompt version, user question, available/read source metadata, response, finish reason, and usage.
+* Raw source content and the constructed prompt are not copied into run history, and `.wonnyy` remains excluded from the knowledge graph.
+* Internal validated read/list operations prepare the records for the M7.5 chat runtime.
+
 Goal:
 
 Record an immutable representation of every AI execution.
@@ -1215,7 +1226,7 @@ One Markdown file
 → Provenance
 ```
 
-The next engineering target is **M7.4 — Model Run Record**, followed by visible chat execution in M7.5.
+The next engineering target is **M7.5 — Chat Runtime** using the secured, attributed, and recorded execution path.
 
 Do not start with autonomous agents.
 

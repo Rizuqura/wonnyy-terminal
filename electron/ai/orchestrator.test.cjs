@@ -5,11 +5,15 @@ const path = require("node:path");
 const test = require("node:test");
 const stations = require("../station-service.cjs");
 const { BrainScopeError } = require("../brain-errors.cjs");
-const { createContextOrchestrator } = require("./orchestrator.cjs");
+const { createContextOrchestrator: createOrchestrator } = require("./orchestrator.cjs");
 
 const runId = "11111111-1111-4111-8111-111111111111";
 const hash = "a".repeat(64);
 const manifestSource = { id: "allocation.md", relativePath: "allocation.md", type: "md", contentHash: hash, missing: false, changed: false };
+
+function createContextOrchestrator(options) {
+  return createOrchestrator({ recordRun: async () => {}, ...options });
+}
 
 function scope(overrides = {}) {
   return { id: "scope-1", ownerId: `model-run:${runId}`, mode: "active-context", manifestVersion: "manifest-1", sources: [manifestSource], ...overrides };
@@ -27,11 +31,15 @@ test("orchestrator uses a run-owned scope and returns source and manifest proven
   let scopeInput;
   let readInput;
   let modelRequest;
+  const records = [];
+  const times = [Date.parse("2026-09-03T00:00:00.000Z"), Date.parse("2026-09-03T00:00:01.250Z")];
   const orchestrator = createContextOrchestrator({
     randomUUID: () => runId,
     prepareScope: async (input) => { scopeInput = input; return scope(); },
     readSource: async (input) => { readInput = input; return content(); },
     provider: { complete: async (request) => { modelRequest = request; return response(request); } },
+    recordRun: async (record) => { records.push(record); },
+    now: () => times.shift(),
   });
   const result = await orchestrator.run({ model: "qwen3:4b", userMessage: "What is the target allocation?", activeStationIds: ["station-b", "station-a", "station-a"], matchMode: "any" });
   assert.deepEqual(scopeInput, { ownerId: `model-run:${runId}`, activeStationIds: ["station-a", "station-b"], matchMode: "any" });
@@ -43,6 +51,12 @@ test("orchestrator uses a run-owned scope and returns source and manifest proven
   assert.equal(result.content, "25%.");
   assert.equal(result.scopeManifestVersion, "manifest-1");
   assert.deepEqual(result.sources, [{ sourceId: "allocation.md", relativePath: "allocation.md", contentHash: hash }]);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].status, "succeeded");
+  assert.equal(records[0].response, "25%.");
+  assert.equal(records[0].durationMs, 1250);
+  assert.equal(records[0].startedAt, "2026-09-03T00:00:00.000Z");
+  assert.deepEqual(records[0].sourcesActuallyRead, result.sources);
 });
 
 test("provider-supplied source claims cannot replace Brain Scope provenance", async () => {
@@ -130,4 +144,33 @@ test("manifest mismatch and provider failures remain structured", async () => {
 
   const malformed = createContextOrchestrator({ randomUUID: () => runId, prepareScope: async () => scope(), readSource: async () => content(), provider: { complete: async (request) => ({ ...response(request), content: "reasoning without structured output" }) } });
   await assert.rejects(() => malformed.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "MODEL_INVALID_RESPONSE");
+});
+
+test("orchestrator records the original structured failure", async () => {
+  const records = [];
+  const orchestrator = createContextOrchestrator({
+    randomUUID: () => runId,
+    prepareScope: async () => scope(),
+    readSource: async () => { throw new BrainScopeError("BRAIN_SOURCE_CHANGED", "Source changed.", { sourceId: "allocation.md" }); },
+    provider: { complete: async () => { throw new Error("provider must not run"); } },
+    recordRun: async (record) => { records.push(record); },
+  });
+  await assert.rejects(() => orchestrator.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "BRAIN_SOURCE_CHANGED");
+  assert.equal(records.length, 1);
+  assert.equal(records[0].status, "failed");
+  assert.equal(records[0].error.code, "BRAIN_SOURCE_CHANGED");
+  assert.equal(records[0].response, null);
+  assert.equal(records[0].sourcesAvailable.length, 1);
+  assert.equal(records[0].sourcesActuallyRead.length, 0);
+});
+
+test("orchestrator never returns an answer that could not be recorded", async () => {
+  const orchestrator = createContextOrchestrator({
+    randomUUID: () => runId,
+    prepareScope: async () => scope(),
+    readSource: async () => content(),
+    provider: { complete: async (request) => response(request) },
+    recordRun: async () => { const error = new Error("disk unavailable"); error.code = "MODEL_RUN_RECORD_FAILED"; throw error; },
+  });
+  await assert.rejects(() => orchestrator.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "MODEL_RUN_RECORD_FAILED" && error.details.originalError.code === "MODEL_RUN_RECORD_FAILED");
 });

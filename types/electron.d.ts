@@ -63,14 +63,18 @@ export type BrainSourceContent = { scopeId: string; ownerId: string; manifestVer
 export interface BrainScopeClientError extends Error { name: "BrainScopeError"; code: BrainErrorCode; details: Record<string, unknown> }
 export type ModelMessage = { role: "system" | "user" | "assistant"; content: string };
 export type ModelRequest = { id: string; model: string; messages: ModelMessage[]; scope?: BrainScope; format?: Record<string, unknown> };
-export type ModelErrorCode = "MODEL_INVALID_REQUEST" | "MODEL_CONTEXT_INVALID" | "MODEL_CONTEXT_TOO_LARGE" | "MODEL_OFFLINE" | "MODEL_NOT_INSTALLED" | "MODEL_NOT_FOUND" | "MODEL_TIMEOUT" | "MODEL_INVALID_RESPONSE" | "PROVIDER_ERROR" | "MODEL_INTERNAL_ERROR";
+export type ModelErrorCode = "MODEL_INVALID_REQUEST" | "MODEL_CONTEXT_INVALID" | "MODEL_CONTEXT_TOO_LARGE" | "MODEL_RUN_RECORD_INVALID" | "MODEL_RUN_RECORD_EXISTS" | "MODEL_RUN_RECORD_NOT_FOUND" | "MODEL_RUN_RECORD_FAILED" | "MODEL_OFFLINE" | "MODEL_NOT_INSTALLED" | "MODEL_NOT_FOUND" | "MODEL_TIMEOUT" | "MODEL_INVALID_RESPONSE" | "PROVIDER_ERROR" | "MODEL_INTERNAL_ERROR";
 export type ModelRuntimeErrorValue = { code: ModelErrorCode; message: string; details: Record<string, unknown> };
 export type LocalModel = { name: string; model: string; size: number; digest: string; modifiedAt: string | null; family: string | null; parameterSize: string | null; quantization: string | null; contextLength: number | null; capabilities: string[] };
 export type ModelStatus = { provider: "ollama"; endpoint: string; online: boolean; checkedAt: string; models: LocalModel[]; error: ModelRuntimeErrorValue | null };
 export type ModelSourceReference = { sourceId: string; relativePath: string; contentHash: string };
+export type ModelAvailableSourceReference = { sourceId: string; relativePath: string; contentHash: string | null };
 export type ModelResponse = { id: string; provider: "ollama"; model: string; content: string; sources: ModelSourceReference[]; finishReason: string; createdAt: string; usage: { promptTokens: number | null; completionTokens: number | null; totalDurationNs: number | null } };
 export type ContextModelRequest = { model: string; userMessage: string; activeStationIds: string[]; matchMode: "any" | "all" };
 export type ContextModelResult = ModelResponse & { scopeId: string; scopeMode: "active-context"; scopeManifestVersion: string; promptVersion: string };
+export type ModelRunStatus = "succeeded" | "failed";
+export type ModelRunErrorValue = { code: ModelErrorCode | BrainErrorCode; message: string; details: Record<string, unknown> };
+export type ModelRunRecord = { schemaVersion: 1; runId: string; status: ModelRunStatus; startedAt: string; completedAt: string; durationMs: number; scope: { id: string; mode: BrainScopeMode; manifestVersion: string } | null; provider: string; model: string; promptVersion: string | null; userMessage: string; sourcesAvailable: ModelAvailableSourceReference[]; sourcesActuallyRead: ModelSourceReference[]; response: string | null; finishReason: string | null; usage: ModelResponse["usage"] | null; error: ModelRunErrorValue | null };
 export type ModelConnectivityTest = ModelResponse & { passed: boolean; expected: "WONNYY ONLINE" };
 export interface ModelProvider { complete(request: ModelRequest): Promise<ModelResponse> }
 

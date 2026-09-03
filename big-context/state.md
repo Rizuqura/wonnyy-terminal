@@ -8,7 +8,7 @@ Amadeus establishes Planet View as the authoritative map of knowledge that a fut
 
 ## Current milestone
 
-**M7.3 — Source provenance complete (2026-09-03).**
+**M7.4 — Immutable model-run recording complete (2026-09-03).**
 
 - Planet View now defines a deterministic effective Brain Scope: Active Context overrides active Station matches, which override the universal supported vault.
 - Scope preparation returns a content-free source manifest with provenance, hashes, Station membership, and token estimates. Opaque capabilities are owned by a specific run, expire after five minutes, and constrain controlled source reads in Electron.
@@ -26,6 +26,10 @@ Amadeus establishes Planet View as the authoritative map of knowledge that a fut
 - Qwen must return a validated structured answer. The orchestrator exposes only the parsed answer plus scope manifest version, source ID, relative path, and content hash.
 - The live isolated-vault proof returned `25%` from the approved Markdown file while excluding a conflicting unrelated vault file.
 - Answer provenance is derived only from the verified Brain Source read. Provider-supplied source claims cannot replace or add to the authoritative source list.
+- Every valid context-aware execution now produces one immutable schema-versioned record under `.wonnyy/model-runs`, including structured failures.
+- Run records preserve timing, scope/manifest identity, provider/model, prompt version, user question, available and actually read sources, verified hashes, response, finish reason, usage, and error metadata.
+- Records use exclusive atomic publication, cannot overwrite an existing run even under concurrency, remain outside Brain Scope, and never duplicate raw source content or the constructed prompt.
+- A successful answer is returned only after its audit record is durable. Validated internal read/list operations prepare history for the future chat runtime.
 - Active Stations render as separate named hubs with explicit hub-to-member lines. Shared objects connect to multiple hubs and settle between their context systems.
 
 ## Model-readiness audit
@@ -42,8 +46,8 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 
 ### Remaining before model execution
 
-1. Record immutable model runs containing request, scope, prompt, provider, response, timing, error, and verified-source provenance.
-2. Present verified sources and connect the secured request path to the chat runtime with streaming, cancellation, retry policy, and structured lifecycle handling.
+1. Present verified sources and connect the secured, recorded request path to the chat runtime with structured lifecycle handling.
+2. Add streaming, cancellation, and retry policy after the first non-streaming chat path is reliable.
 3. Add provider-aware tokenization, context budgeting, chunking, and retrieval so large vaults and large CSV files are not read wholesale.
 4. Avoid sequentially hashing and estimating every file on the Electron main path for each universal scope preparation; introduce bounded or incremental indexing.
 5. Add broader size policies, OCR or an explicit unreadable status for scanned PDFs, and accurate type handling for missing sources.
@@ -70,10 +74,10 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 
 ## Verification at the Amadeus baseline
 
-- `npm test`: all 42 service, Brain Scope, prompt-builder, orchestrator, Ollama provider, layout, and hit-testing tests pass.
-- `npm run test:m72:live`: local `qwen3:4b` returns exactly `25%` from one approved Markdown source with source provenance.
+- `npm test`: all 49 service, Brain Scope, prompt-builder, orchestrator, run-store, Ollama provider, layout, and hit-testing tests pass.
+- `npm run test:m74:live`: local `qwen3:4b` returns exactly `25%` from one approved Markdown source with provenance and one successful immutable run record.
 - `npm run build`: production build passes and includes the local PDF.js worker.
 
 ## Next intended milestone
 
-Begin **M7.4 — Model Run Record** by recording an immutable representation of each AI execution without yet connecting general chat execution.
+Begin **M7.5 — Chat Runtime** by connecting the existing chat prototype to the secured, attributed, and recorded request path without granting renderer filesystem or Ollama authority.
