@@ -1,17 +1,25 @@
-# Wonnyy V0.0.1 — Amadeus
+# Wonnyy V0.0.2 — Amadeus Preparation Checkpoint
 
 ## Release declaration
 
-**Wonnyy V0.0.1 — Amadeus** is the current project baseline as of **2026-09-03**.
+**Wonnyy V0.0.2 — Amadeus Preparation Checkpoint** is the current project baseline as of **2026-09-03**.
 
-Amadeus establishes Planet View as the authoritative map of knowledge that a future model may access. It is a **model-addressable knowledge environment**, not yet a model-executing or agent-ready release. No local model, hosted provider, chat runtime, or autonomous agent loop is connected in V0.0.1.
+Amadeus establishes Planet View as the authoritative map of knowledge that a future model may access. V0.0.2 is the checkpoint immediately before full context-aware local-model integration: Brain Scope errors and authorization boundaries have been hardened, local Ollama connectivity has been proven, and application branding has been tidied. The prototype chat is not yet connected to model execution, and no autonomous agent loop exists.
 
 ## Current milestone
 
-**M6 — Planet View Brain Scope and provider-neutral knowledge boundary complete.**
+**M7.1 — Local Ollama connectivity complete (2026-09-03).**
 
 - Planet View now defines a deterministic effective Brain Scope: Active Context overrides active Station matches, which override the universal supported vault.
-- Scope preparation returns a content-free source manifest with provenance, hashes, Station membership, and token estimates. Opaque scope capabilities constrain controlled source reads in Electron; replacement scopes invalidate earlier capabilities.
+- Scope preparation returns a content-free source manifest with provenance, hashes, Station membership, and token estimates. Opaque capabilities are owned by a specific run, expire after five minutes, and constrain controlled source reads in Electron.
+- Invalid or stale Station identifiers now fail closed with `BRAIN_INVALID_STATIONS`; they can never fall back to Universe scope, including when Active Context exists.
+- Brain Scope and source-read inputs are validated at runtime. Errors cross IPC as stable codes, messages, and structured details.
+- Concurrent runs keep independent scopes instead of invalidating one another. Owner mismatches, expired scopes, unauthorized sources, missing sources, and post-scope file changes are rejected before content is returned.
+- Every scope and authorized source read carries a deterministic manifest version so future model runs can bind provenance to the exact prepared source set.
+- Electron now owns a local-only Ollama provider boundary at `http://127.0.0.1:11434`; remote, authenticated, and non-HTTP endpoints are rejected in this milestone.
+- The isolated preload bridge exposes model status, installed-model listing, and a fixed connectivity test. The renderer still cannot send arbitrary prompts or vault content to Ollama.
+- Local Ollama `0.33.2` and the installed `qwen3:4b` model completed the structured connectivity proof with `WONNYY ONLINE`. The proof carried no Brain Scope, sources, tools, or filesystem authority.
+- Ollama responses and model listings receive runtime validation. Offline, missing-model, timeout, invalid-response, provider, and malformed-request cases use stable structured errors.
 - Provider-neutral request, response, message, source, and provider contracts are ready for a future local or remote model adapter. No provider is connected yet.
 - Active Stations render as separate named hubs with explicit hub-to-member lines. Shared objects connect to multiple hubs and settle between their context systems.
 
@@ -27,18 +35,16 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 - Markdown and CSV text access plus PDF text-layer extraction.
 - Visual Station networks that correspond to distinct semantic scopes.
 
-### Required before model execution
+### Remaining before model execution
 
-1. Prevent invalid or stale Station identifiers from falling back to universal scope; an invalid narrowing request must fail closed.
-2. Implement an executable provider adapter and orchestration service rather than relying on TypeScript interfaces alone.
-3. Add prompt construction rules, source boundaries, prompt-injection handling, and auditable attribution tied to sources actually read.
-4. Add provider-aware tokenization, context budgeting, chunking, and retrieval so large vaults and large CSV files are not read wholesale.
-5. Avoid sequentially hashing and estimating every file on the Electron main path for each universal scope preparation; introduce bounded or incremental indexing.
-6. Add runtime schema validation at IPC and provider boundaries, plus streaming, cancellation, timeouts, retry policy, and structured error handling.
-7. Give scope capabilities run ownership and expiry so concurrent model requests cannot invalidate one another globally.
-8. Add size limits for Markdown and CSV, OCR or an explicit unreadable status for scanned PDFs, and accurate type handling for missing sources.
-9. Record immutable model runs containing scope identity, manifest version, sources actually read, provider/model configuration, and response provenance.
-10. Add secure provider configuration and secret handling before any remote provider is enabled.
+1. Implement the AI orchestrator that binds the hardened Brain Scope to the provider adapter.
+2. Add prompt construction rules, source boundaries, prompt-injection handling, and auditable attribution tied to sources actually read.
+3. Add provider-aware tokenization, context budgeting, chunking, and retrieval so large vaults and large CSV files are not read wholesale.
+4. Avoid sequentially hashing and estimating every file on the Electron main path for each universal scope preparation; introduce bounded or incremental indexing.
+5. Add chat streaming, cancellation, retry policy, and structured run lifecycle handling.
+6. Add size limits for Markdown and CSV, OCR or an explicit unreadable status for scanned PDFs, and accurate type handling for missing sources.
+7. Record immutable model runs containing scope identity, manifest version, sources actually read, provider/model configuration, and response provenance.
+8. Add secure provider configuration and secret handling before any remote provider is enabled.
 
 ## Known product boundary
 
@@ -61,9 +67,9 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 
 ## Verification at the Amadeus baseline
 
-- `npm test`: recursive scan, PDF text extraction/search, binary reads, PDF size limits, and vault-boundary tests pass.
+- `npm test`: all 23 service, Brain Scope security, Ollama provider, layout, and hit-testing tests pass.
 - `npm run build`: production build passes and includes the local PDF.js worker.
 
 ## Next intended milestone
 
-Close the model-readiness audit findings, beginning with fail-closed scope resolution and an auditable provider-neutral orchestration layer. Then connect a replaceable local model adapter without weakening vault boundaries or granting model-side Station mutation.
+Begin **M7.2 — Context-Aware Model Request** with one explicitly approved Markdown source. Add the orchestrator and prompt-injection boundary, then prove that Qwen receives only that authorized content and returns its source identity and hash.

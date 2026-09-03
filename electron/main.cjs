@@ -2,9 +2,18 @@ const { app, BrowserWindow, dialog, shell, ipcMain } = require("electron");
 const path = require("path");
 const { readPdfFile, readVaultFile, scanVault, searchPdfText } = require("./vault-service.cjs");
 const stations = require("./station-service.cjs");
+const { serializeBrainError } = require("./brain-errors.cjs");
+const { OllamaProvider } = require("./ai/providers/ollama-provider.cjs");
+const { serializeModelError } = require("./ai/model-errors.cjs");
 
 const isDevelopment = Boolean(process.env.ELECTRON_START_URL);
 let activeVaultPath = process.env.WONNYY_VAULT_PATH || (process.platform === "win32" ? "C:\\bank" : "/bank");
+let ollamaProvider;
+
+function getOllamaProvider() {
+  ollamaProvider ??= new OllamaProvider();
+  return ollamaProvider;
+}
 
 function getVaultSnapshot() {
   return scanVault(activeVaultPath);
@@ -21,6 +30,22 @@ async function selectVaultFolder() {
   return getVaultSnapshot();
 }
 
+async function brainOperation(operation) {
+  try {
+    return { ok: true, value: await operation() };
+  } catch (error) {
+    return { ok: false, error: serializeBrainError(error) };
+  }
+}
+
+async function modelOperation(operation) {
+  try {
+    return { ok: true, value: await operation() };
+  } catch (error) {
+    return { ok: false, error: serializeModelError(error) };
+  }
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
@@ -29,6 +54,7 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: "#0a0d0e",
     title: "Wonnyy — Amadeus",
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -73,8 +99,11 @@ app.whenReady().then(() => {
   ipcMain.handle("context:remove", (_, paths) => stations.removeContext(activeVaultPath, paths));
   ipcMain.handle("context:clear", () => stations.clearContext(activeVaultPath));
   ipcMain.handle("context:buildPackage", () => stations.buildContextPackage(activeVaultPath));
-  ipcMain.handle("brain:prepareScope", (_, input) => stations.prepareBrainScope(activeVaultPath, input));
-  ipcMain.handle("brain:readSource", (_, scopeId, sourceId) => stations.readBrainSource(activeVaultPath, scopeId, sourceId));
+  ipcMain.handle("brain:prepareScope", (_, input) => brainOperation(() => stations.prepareBrainScope(activeVaultPath, input)));
+  ipcMain.handle("brain:readSource", (_, input) => brainOperation(() => stations.readBrainSource(activeVaultPath, input)));
+  ipcMain.handle("ai:getStatus", () => modelOperation(() => getOllamaProvider().getStatus()));
+  ipcMain.handle("ai:listModels", () => modelOperation(() => getOllamaProvider().listModels()));
+  ipcMain.handle("ai:testModel", (_, model) => modelOperation(() => getOllamaProvider().testModel(model)));
   createWindow();
 
   app.on("activate", () => {

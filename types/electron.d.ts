@@ -54,13 +54,21 @@ export type ContextSource = { id: string; relativePath: string; name?: string; t
 export type ContextPackage = { schemaVersion: number; vault: { rootPath: string }; generatedAt: string; tokenEstimateMethod: string; estimatedTokens: number; sources: ContextSource[] };
 export type ReattachmentSuggestion = { relativePath: string; candidates: string[] };
 export type BrainScopeMode = "universe" | "station" | "active-context";
-export type BrainScopeInput = { activeStationIds: string[]; matchMode: "any" | "all" };
+export type BrainErrorCode = "BRAIN_INVALID_REQUEST" | "BRAIN_INVALID_STATIONS" | "BRAIN_VAULT_UNAVAILABLE" | "BRAIN_SCOPE_NOT_FOUND" | "BRAIN_SCOPE_EXPIRED" | "BRAIN_SCOPE_OWNER_MISMATCH" | "BRAIN_SOURCE_NOT_AUTHORIZED" | "BRAIN_SOURCE_UNAVAILABLE" | "BRAIN_SOURCE_CHANGED" | "BRAIN_INTERNAL_ERROR";
+export type BrainScopeInput = { ownerId: string; activeStationIds: string[]; matchMode: "any" | "all" };
+export type BrainSourceReadInput = { ownerId: string; scopeId: string; sourceId: string };
 export type BrainSource = { id: string; relativePath: string; name: string; type: "md" | "markdown" | "csv" | "pdf"; stations: string[]; estimatedTokens: number; contentHash: string | null; missing: boolean; changed: boolean };
-export type BrainScope = { id: string; mode: BrainScopeMode; reason: string; stationIds: string[]; stationNames: string[]; createdAt: string; estimatedTokens: number; sources: BrainSource[] };
-export type BrainSourceContent = { scopeId: string; sourceId: string; relativePath: string; type: BrainSource["type"]; content: string; contentHash: string; estimatedTokens: number };
+export type BrainScope = { id: string; ownerId: string; mode: BrainScopeMode; reason: string; stationIds: string[]; stationNames: string[]; manifestVersion: string; createdAt: string; expiresAt: string; estimatedTokens: number; sources: BrainSource[] };
+export type BrainSourceContent = { scopeId: string; ownerId: string; manifestVersion: string; sourceId: string; relativePath: string; type: BrainSource["type"]; content: string; contentHash: string; estimatedTokens: number };
+export interface BrainScopeClientError extends Error { name: "BrainScopeError"; code: BrainErrorCode; details: Record<string, unknown> }
 export type ModelMessage = { role: "system" | "user" | "assistant"; content: string };
 export type ModelRequest = { id: string; model: string; messages: ModelMessage[]; scope: BrainScope };
-export type ModelResponse = { id: string; model: string; content: string; sources: { sourceId: string; contentHash: string }[]; finishReason: "stop" | "length" | "error" };
+export type ModelErrorCode = "MODEL_INVALID_REQUEST" | "MODEL_OFFLINE" | "MODEL_NOT_INSTALLED" | "MODEL_NOT_FOUND" | "MODEL_TIMEOUT" | "MODEL_INVALID_RESPONSE" | "PROVIDER_ERROR" | "MODEL_INTERNAL_ERROR";
+export type ModelRuntimeErrorValue = { code: ModelErrorCode; message: string; details: Record<string, unknown> };
+export type LocalModel = { name: string; model: string; size: number; digest: string; modifiedAt: string | null; family: string | null; parameterSize: string | null; quantization: string | null; contextLength: number | null; capabilities: string[] };
+export type ModelStatus = { provider: "ollama"; endpoint: string; online: boolean; checkedAt: string; models: LocalModel[]; error: ModelRuntimeErrorValue | null };
+export type ModelResponse = { id: string; provider: "ollama"; model: string; content: string; sources: { sourceId: string; contentHash: string }[]; finishReason: string; createdAt: string; usage: { promptTokens: number | null; completionTokens: number | null; totalDurationNs: number | null } };
+export type ModelConnectivityTest = ModelResponse & { passed: boolean; expected: "WONNYY ONLINE" };
 export interface ModelProvider { complete(request: ModelRequest): Promise<ModelResponse> }
 
 declare global {
@@ -92,7 +100,12 @@ declare global {
         clear: () => Promise<StationState>;
         buildPackage: () => Promise<ContextPackage>;
         prepareBrainScope: (input: BrainScopeInput) => Promise<BrainScope>;
-        readBrainSource: (scopeId: string, sourceId: string) => Promise<BrainSourceContent>;
+        readBrainSource: (input: BrainSourceReadInput) => Promise<BrainSourceContent>;
+      };
+      ai: {
+        getStatus: () => Promise<ModelStatus>;
+        listModels: () => Promise<LocalModel[]>;
+        testModel: (model: string) => Promise<ModelConnectivityTest>;
       };
     };
   }

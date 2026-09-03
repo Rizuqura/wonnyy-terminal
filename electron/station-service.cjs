@@ -2,12 +2,15 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { getIndexedPdfText, readVaultFile, scanVault } = require("./vault-service.cjs");
+const { BRAIN_ERROR_CODES, BrainScopeError } = require("./brain-errors.cjs");
 
 const SCHEMA_VERSION = 1;
 const SUPPORTED = new Set([".md", ".markdown", ".csv", ".pdf"]);
 const cache = new Map();
 const queues = new Map();
 const brainScopes = new Map();
+const BRAIN_SCOPE_TTL_MS = 5 * 60 * 1000;
+const MAX_BRAIN_SCOPES = 128;
 
 const emptyDocument = () => ({ schemaVersion: SCHEMA_VERSION, revision: 0, stations: [], assignments: [], activeContext: [] });
 const metadataPath = (rootPath) => path.join(rootPath, ".wonnyy", "stations.json");
@@ -160,18 +163,81 @@ async function readableSource(rootPath, entry, assignmentMap, stationMap, record
   };
 }
 
-async function prepareBrainScope(rootPath, rawInput = {}) {
-  const input = rawInput && typeof rawInput === "object" ? rawInput : {};
-  const matchMode = input.matchMode === "all" ? "all" : "any";
+function assertPlainObject(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.INVALID_REQUEST, `${label} must be an object.`);
+  }
+}
+
+function validateCapabilityId(value, field) {
+  if (typeof value !== "string" || !value.trim() || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.INVALID_REQUEST, `${field} must be a non-empty identifier of at most 128 characters.`, { field });
+  }
+  return value;
+}
+
+function validateScopeRequest(rawInput) {
+  assertPlainObject(rawInput, "Brain Scope request");
+  const allowedFields = new Set(["ownerId", "activeStationIds", "matchMode"]);
+  const unknownFields = Object.keys(rawInput).filter((field) => !allowedFields.has(field));
+  if (unknownFields.length) throw new BrainScopeError(BRAIN_ERROR_CODES.INVALID_REQUEST, "Brain Scope request contains unsupported fields.", { fields: unknownFields });
+  const ownerId = validateCapabilityId(rawInput.ownerId, "ownerId");
+  if (!Array.isArray(rawInput.activeStationIds) || rawInput.activeStationIds.some((id) => typeof id !== "string" || !id)) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.INVALID_REQUEST, "activeStationIds must be an array of non-empty Station identifiers.", { field: "activeStationIds" });
+  }
+  if (rawInput.matchMode !== "any" && rawInput.matchMode !== "all") {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.INVALID_REQUEST, 'matchMode must be either "any" or "all".', { field: "matchMode" });
+  }
+  return { ownerId, activeStationIds: [...new Set(rawInput.activeStationIds)].sort(), matchMode: rawInput.matchMode };
+}
+
+function validateSourceReadRequest(rawInput) {
+  assertPlainObject(rawInput, "Brain source read request");
+  const allowedFields = new Set(["ownerId", "scopeId", "sourceId"]);
+  const unknownFields = Object.keys(rawInput).filter((field) => !allowedFields.has(field));
+  if (unknownFields.length) throw new BrainScopeError(BRAIN_ERROR_CODES.INVALID_REQUEST, "Brain source read request contains unsupported fields.", { fields: unknownFields });
+  return {
+    ownerId: validateCapabilityId(rawInput.ownerId, "ownerId"),
+    scopeId: validateCapabilityId(rawInput.scopeId, "scopeId"),
+    sourceId: validateCapabilityId(rawInput.sourceId, "sourceId"),
+  };
+}
+
+function pruneBrainScopes(now = Date.now()) {
+  for (const [scopeId, scope] of brainScopes) if (scope.expiresAtMs <= now) brainScopes.delete(scopeId);
+  while (brainScopes.size >= MAX_BRAIN_SCOPES) brainScopes.delete(brainScopes.keys().next().value);
+}
+
+function scopeManifestVersion(documentRevision, mode, matchMode, activeStationIds, sources) {
+  const manifest = {
+    schemaVersion: SCHEMA_VERSION,
+    documentRevision,
+    mode,
+    matchMode,
+    stationIds: activeStationIds,
+    sources: sources.map((source) => ({ id: source.id, hash: source.contentHash, missing: source.missing })),
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+}
+
+async function prepareBrainScope(rootPath, rawInput) {
+  const input = validateScopeRequest(rawInput);
+  const { ownerId, matchMode } = input;
   const loaded = await load(rootPath);
-  if (loaded.error) throw new Error(loaded.error);
+  if (loaded.error) throw new BrainScopeError(BRAIN_ERROR_CODES.VAULT_UNAVAILABLE, loaded.error);
   const snapshot = await scanVault(rootPath);
-  if (snapshot.status !== "ready") throw new Error(snapshot.message || "Vault is unavailable.");
+  if (snapshot.status !== "ready") throw new BrainScopeError(BRAIN_ERROR_CODES.VAULT_UNAVAILABLE, snapshot.message || "Vault is unavailable.");
   const known = flatten(snapshot.entries);
   const stationMap = new Map(loaded.document.stations.map((station) => [station.id, station.name]));
-  const activeStationIds = [...new Set(Array.isArray(input.activeStationIds) ? input.activeStationIds : [])]
-    .filter((id) => stationMap.has(id))
-    .sort();
+  const unknownStationIds = input.activeStationIds.filter((id) => !stationMap.has(id));
+  if (unknownStationIds.length) {
+    throw new BrainScopeError(
+      BRAIN_ERROR_CODES.INVALID_STATIONS,
+      "Brain Scope references unknown or stale Stations. Refresh the Station state before continuing.",
+      { stationIds: unknownStationIds },
+    );
+  }
+  const activeStationIds = input.activeStationIds;
   const assignmentMap = new Map(loaded.document.assignments.map((item) => [item.relativePath, item.stationIds]));
   const recordedContext = new Map(loaded.document.activeContext.map((item) => [item.relativePath, item]));
   const selectedPaths = new Set();
@@ -210,35 +276,62 @@ async function prepareBrainScope(rootPath, rawInput = {}) {
   }
   for (const relativePath of missing.sort()) sources.push({ id: relativePath, relativePath, name: path.basename(relativePath), type: "md", stations: [], estimatedTokens: 0, contentHash: null, missing: true, changed: false });
 
+  const createdAtMs = Date.now();
+  const manifestVersion = scopeManifestVersion(loaded.document.revision, mode, matchMode, activeStationIds, sources);
   const scope = {
     id: crypto.randomUUID(),
+    ownerId,
     mode,
     reason,
     stationIds: activeStationIds,
     stationNames: activeStationIds.map((id) => stationMap.get(id)),
-    createdAt: new Date().toISOString(),
+    manifestVersion,
+    createdAt: new Date(createdAtMs).toISOString(),
+    expiresAt: new Date(createdAtMs + BRAIN_SCOPE_TTL_MS).toISOString(),
     estimatedTokens: sources.reduce((sum, source) => sum + source.estimatedTokens, 0),
     sources,
   };
   const resolvedRoot = path.resolve(rootPath);
-  for (const [existingId, existing] of brainScopes) if (existing.rootPath === resolvedRoot) brainScopes.delete(existingId);
-  brainScopes.set(scope.id, { rootPath: resolvedRoot, allowed: new Map(sources.filter((source) => !source.missing).map((source) => [source.id, source.contentHash])) });
-  while (brainScopes.size > 32) brainScopes.delete(brainScopes.keys().next().value);
+  pruneBrainScopes(createdAtMs);
+  brainScopes.set(scope.id, {
+    rootPath: resolvedRoot,
+    ownerId,
+    manifestVersion,
+    expiresAtMs: createdAtMs + BRAIN_SCOPE_TTL_MS,
+    allowed: new Map(sources.filter((source) => !source.missing).map((source) => [source.id, source.contentHash])),
+  });
   return scope;
 }
 
-async function readBrainSource(rootPath, scopeId, sourceId) {
+async function readBrainSource(rootPath, rawInput) {
+  const { ownerId, scopeId, sourceId } = validateSourceReadRequest(rawInput);
+  const now = Date.now();
   const scope = brainScopes.get(scopeId);
-  if (!scope || scope.rootPath !== path.resolve(rootPath)) throw new Error("Brain scope is unavailable or expired.");
-  if (!scope.allowed.has(sourceId)) throw new Error("Source is outside the prepared Brain scope.");
+  if (!scope || scope.rootPath !== path.resolve(rootPath)) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.SCOPE_NOT_FOUND, "Brain Scope is unavailable. Prepare a new scope before reading sources.", { scopeId });
+  }
+  if (scope.expiresAtMs <= now) {
+    brainScopes.delete(scopeId);
+    throw new BrainScopeError(BRAIN_ERROR_CODES.SCOPE_EXPIRED, "Brain Scope expired. Prepare a new scope before reading sources.", { scopeId });
+  }
+  if (scope.ownerId !== ownerId) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.OWNER_MISMATCH, "Brain Scope belongs to a different model run.", { scopeId });
+  }
+  if (!scope.allowed.has(sourceId)) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_NOT_AUTHORIZED, "Source is outside the prepared Brain Scope.", { scopeId, sourceId });
+  }
   const snapshot = await scanVault(rootPath);
   const entry = flatten(snapshot.entries).get(sourceId);
-  if (!entry || entry.kind !== "file" || !SUPPORTED.has(entry.extension)) throw new Error("Brain source is missing or unsupported.");
+  if (snapshot.status !== "ready" || !entry || entry.kind !== "file" || !SUPPORTED.has(entry.extension)) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_UNAVAILABLE, "Brain source is missing or unsupported.", { scopeId, sourceId });
+  }
   const extension = entry.extension.toLowerCase();
   const content = extension === ".pdf" ? getIndexedPdfText(rootPath, sourceId) ?? "" : (await readVaultFile(rootPath, sourceId)).content;
   const contentHash = crypto.createHash("sha256").update(content).digest("hex");
-  if (scope.allowed.get(sourceId) !== contentHash) throw new Error("Brain source changed after the scope was prepared. Prepare a fresh scope before reading it.");
-  return { scopeId, sourceId, relativePath: sourceId, type: extension.slice(1), content, contentHash, estimatedTokens: Math.ceil(content.length / 4) };
+  if (scope.allowed.get(sourceId) !== contentHash) {
+    throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "Brain source changed after the scope was prepared. Prepare a fresh scope before reading it.", { scopeId, sourceId });
+  }
+  return { scopeId, ownerId, manifestVersion: scope.manifestVersion, sourceId, relativePath: sourceId, type: extension.slice(1), content, contentHash, estimatedTokens: Math.ceil(content.length / 4) };
 }
 
 async function suggestReattachments(rootPath) {

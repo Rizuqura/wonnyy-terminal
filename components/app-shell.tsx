@@ -50,6 +50,7 @@ export function AppShell() {
   const [brainScope, setBrainScope] = useState<BrainScope | null>(null);
   const [brainScopeError, setBrainScopeError] = useState<string | null>(null);
   const [brainScopeBusy, setBrainScopeBusy] = useState(false);
+  const brainScopeOwnerId = useRef<string | null>(null);
   const sidebarResizeStart = useRef<{ x: number; width: number } | null>(null);
 
   const graph = useMemo(() => (snapshot ? buildGraphFromVault(snapshot) : null), [snapshot]);
@@ -71,8 +72,9 @@ export function AppShell() {
   useEffect(() => {
     if (snapshot?.status !== "ready" || !stationState) { setBrainScope(null); return; }
     let cancelled = false;
+    brainScopeOwnerId.current ??= globalThis.crypto.randomUUID();
     setBrainScopeBusy(true);
-    void requireKnowledgeBridge().context.prepareBrainScope({ activeStationIds: [...activeStationIds], matchMode: stationMatchMode })
+    void requireKnowledgeBridge().context.prepareBrainScope({ ownerId: brainScopeOwnerId.current, activeStationIds: [...activeStationIds], matchMode: stationMatchMode })
       .then((scope) => { if (!cancelled) { setBrainScope(scope); setBrainScopeError(null); } })
       .catch((error) => { if (!cancelled) { setBrainScope(null); setBrainScopeError(error instanceof Error ? error.message : "Brain scope could not be prepared."); } })
       .finally(() => { if (!cancelled) setBrainScopeBusy(false); });

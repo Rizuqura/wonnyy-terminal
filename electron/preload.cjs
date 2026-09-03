@@ -1,9 +1,29 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+async function invokeBrain(channel, input) {
+  const result = await ipcRenderer.invoke(channel, input);
+  if (result?.ok) return result.value;
+  const error = new Error(result?.error?.message || "Brain operation failed.");
+  error.name = "BrainScopeError";
+  error.code = result?.error?.code || "BRAIN_INTERNAL_ERROR";
+  error.details = result?.error?.details || {};
+  throw error;
+}
+
+async function invokeModel(channel, input) {
+  const result = await ipcRenderer.invoke(channel, input);
+  if (result?.ok) return result.value;
+  const error = new Error(result?.error?.message || "Model operation failed.");
+  error.name = "ModelRuntimeError";
+  error.code = result?.error?.code || "MODEL_INTERNAL_ERROR";
+  error.details = result?.error?.details || {};
+  throw error;
+}
+
 // Future desktop capabilities must be exposed here deliberately, not by giving
 // renderer components unrestricted Node.js or filesystem access.
 contextBridge.exposeInMainWorld("wonnyyDesktop", {
-  apiVersion: 3,
+  apiVersion: 5,
   platform: process.platform,
   vault: {
     getSnapshot: () => ipcRenderer.invoke("vault:getSnapshot"),
@@ -28,7 +48,12 @@ contextBridge.exposeInMainWorld("wonnyyDesktop", {
     remove: (paths) => ipcRenderer.invoke("context:remove", paths),
     clear: () => ipcRenderer.invoke("context:clear"),
     buildPackage: () => ipcRenderer.invoke("context:buildPackage"),
-    prepareBrainScope: (input) => ipcRenderer.invoke("brain:prepareScope", input),
-    readBrainSource: (scopeId, sourceId) => ipcRenderer.invoke("brain:readSource", scopeId, sourceId),
+    prepareBrainScope: (input) => invokeBrain("brain:prepareScope", input),
+    readBrainSource: (input) => invokeBrain("brain:readSource", input),
+  },
+  ai: {
+    getStatus: () => invokeModel("ai:getStatus"),
+    listModels: () => invokeModel("ai:listModels"),
+    testModel: (model) => invokeModel("ai:testModel", model),
   },
 });

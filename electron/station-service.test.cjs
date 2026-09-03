@@ -95,26 +95,90 @@ test("Brain scope resolves universe, Stations, and Active Context in precedence 
     await stations.setAssignments(vaultPath, ["alpha/shared.csv"], beta.id, true);
     await stations.setAssignments(vaultPath, ["b.md"], beta.id, true);
 
-    const universe = await stations.prepareBrainScope(vaultPath, { activeStationIds: [], matchMode: "any" });
+    const universe = await stations.prepareBrainScope(vaultPath, { ownerId: "run-universe", activeStationIds: [], matchMode: "any" });
     assert.equal(universe.mode, "universe");
     assert.deepEqual(universe.sources.map((source) => source.relativePath), ["alpha/a.md", "alpha/shared.csv", "b.md"]);
+    assert.equal(universe.manifestVersion.length, 64);
+    assert.equal(Date.parse(universe.expiresAt) > Date.parse(universe.createdAt), true);
 
-    const alphaScope = await stations.prepareBrainScope(vaultPath, { activeStationIds: [alpha.id], matchMode: "any" });
+    const alphaScope = await stations.prepareBrainScope(vaultPath, { ownerId: "run-alpha", activeStationIds: [alpha.id], matchMode: "any" });
     assert.equal(alphaScope.mode, "station");
     assert.deepEqual(alphaScope.sources.map((source) => source.relativePath), ["alpha/a.md", "alpha/shared.csv"]);
-    const read = await stations.readBrainSource(vaultPath, alphaScope.id, "alpha/a.md");
+    const read = await stations.readBrainSource(vaultPath, { ownerId: "run-alpha", scopeId: alphaScope.id, sourceId: "alpha/a.md" });
     assert.equal(read.content, "alpha knowledge");
-    await assert.rejects(() => stations.readBrainSource(vaultPath, alphaScope.id, "b.md"), /outside the prepared Brain scope/);
+    assert.equal(read.manifestVersion, alphaScope.manifestVersion);
+    await assert.rejects(
+      () => stations.readBrainSource(vaultPath, { ownerId: "run-alpha", scopeId: alphaScope.id, sourceId: "b.md" }),
+      (error) => error.code === "BRAIN_SOURCE_NOT_AUTHORIZED",
+    );
 
-    const allScope = await stations.prepareBrainScope(vaultPath, { activeStationIds: [alpha.id, beta.id], matchMode: "all" });
+    const allScope = await stations.prepareBrainScope(vaultPath, { ownerId: "run-all", activeStationIds: [alpha.id, beta.id], matchMode: "all" });
     assert.equal(allScope.sources.length, 0, "folder membership does not imply Station inheritance for ALL matching");
-    await assert.rejects(() => stations.readBrainSource(vaultPath, alphaScope.id, "alpha/a.md"), /unavailable or expired/);
+    assert.equal((await stations.readBrainSource(vaultPath, { ownerId: "run-alpha", scopeId: alphaScope.id, sourceId: "alpha/a.md" })).content, "alpha knowledge", "a concurrent scope must not invalidate another run");
+    await assert.rejects(
+      () => stations.readBrainSource(vaultPath, { ownerId: "run-all", scopeId: alphaScope.id, sourceId: "alpha/a.md" }),
+      (error) => error.code === "BRAIN_SCOPE_OWNER_MISMATCH",
+    );
 
     await stations.addContext(vaultPath, ["b.md"]);
     await fs.writeFile(path.join(vaultPath, "b.md"), "beta knowledge changed");
-    const override = await stations.prepareBrainScope(vaultPath, { activeStationIds: [alpha.id], matchMode: "any" });
+    const override = await stations.prepareBrainScope(vaultPath, { ownerId: "run-override", activeStationIds: [alpha.id], matchMode: "any" });
     assert.equal(override.mode, "active-context");
     assert.deepEqual(override.sources.map((source) => source.relativePath), ["b.md"]);
     assert.equal(override.sources[0].changed, true);
+  });
+});
+
+test("Brain scope requests fail closed for malformed or stale narrowing input", async () => {
+  await withVault(async (vaultPath) => {
+    await fs.writeFile(path.join(vaultPath, "private.md"), "vault universe");
+    const state = await stations.createStation(vaultPath, "Valid");
+
+    await assert.rejects(
+      () => stations.prepareBrainScope(vaultPath, { ownerId: "run-invalid", activeStationIds: ["stale-station-id"], matchMode: "any" }),
+      (error) => error.code === "BRAIN_INVALID_STATIONS" && error.details.stationIds[0] === "stale-station-id",
+    );
+    await assert.rejects(
+      () => stations.prepareBrainScope(vaultPath, { ownerId: "run-invalid", activeStationIds: [state.stations[0].id], matchMode: "some" }),
+      (error) => error.code === "BRAIN_INVALID_REQUEST",
+    );
+    await assert.rejects(
+      () => stations.prepareBrainScope(vaultPath, { activeStationIds: [], matchMode: "any" }),
+      (error) => error.code === "BRAIN_INVALID_REQUEST",
+    );
+
+    await stations.addContext(vaultPath, ["private.md"]);
+    await assert.rejects(
+      () => stations.prepareBrainScope(vaultPath, { ownerId: "run-invalid", activeStationIds: ["stale-station-id"], matchMode: "all" }),
+      (error) => error.code === "BRAIN_INVALID_STATIONS",
+      "Active Context precedence must not hide an invalid Station request",
+    );
+  });
+});
+
+test("Brain scope capabilities expire and changed sources fail before content is returned", async () => {
+  await withVault(async (vaultPath) => {
+    await fs.writeFile(path.join(vaultPath, "note.md"), "original");
+    const originalNow = Date.now;
+    let now = Date.parse("2026-09-03T00:00:00.000Z");
+    Date.now = () => now;
+    try {
+      const changedScope = await stations.prepareBrainScope(vaultPath, { ownerId: "run-changed", activeStationIds: [], matchMode: "any" });
+      await fs.writeFile(path.join(vaultPath, "note.md"), "changed");
+      await assert.rejects(
+        () => stations.readBrainSource(vaultPath, { ownerId: "run-changed", scopeId: changedScope.id, sourceId: "note.md" }),
+        (error) => error.code === "BRAIN_SOURCE_CHANGED",
+      );
+
+      await fs.writeFile(path.join(vaultPath, "note.md"), "stable");
+      const expiringScope = await stations.prepareBrainScope(vaultPath, { ownerId: "run-expiring", activeStationIds: [], matchMode: "any" });
+      now += 5 * 60 * 1000 + 1;
+      await assert.rejects(
+        () => stations.readBrainSource(vaultPath, { ownerId: "run-expiring", scopeId: expiringScope.id, sourceId: "note.md" }),
+        (error) => error.code === "BRAIN_SCOPE_EXPIRED",
+      );
+    } finally {
+      Date.now = originalNow;
+    }
   });
 });
