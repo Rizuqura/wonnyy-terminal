@@ -1,4 +1,4 @@
-# Wonnyy - Amadeus 0.0.3
+# Wonnyy - Amadeus 0.0.4
 
 Wonnyy is a local-first Electron research workspace. Explorer, Planet View, and the document reader share a user-owned vault. Chat uses one explicitly approved Markdown source through a controlled Electron boundary.
 

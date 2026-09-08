@@ -20,7 +20,7 @@ export function TopBar({
       <div className="brand">
         <span className="brand-mark">W</span>
         <span>WONNYY</span>
-        <span className="version">ver 0.0.3</span>
+        <span className="version">ver 0.0.4</span>
       </div>
       <nav className="top-nav" aria-label="Primary">
         <button className="nav-item" onClick={onChangeVault}>
