@@ -1,16 +1,15 @@
 const fs = require("fs/promises");
 const path = require("path");
-const { pathToFileURL } = require("url");
 
 const SUPPORTED_EXTENSIONS = new Set([".md", ".markdown", ".csv", ".pdf"]);
 const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".csv"]);
 const IGNORED_DIRECTORIES = new Set([".git", ".wonnyy", "node_modules"]);
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
-const STANDARD_FONT_DATA_URL = `${pathToFileURL(path.join(__dirname, "..", "node_modules", "pdfjs-dist", "standard_fonts")).href}/`;
+const PDFJS_DIRECTORY = path.dirname(require.resolve("pdfjs-dist/package.json"));
 
 let pdfjsPromise;
-let indexedRootPath = null;
-const pdfTextIndex = new Map();
+const pdfIndexes = new Map();
+const activeScans = new Map();
 
 function issue(relativePath, message) {
   return { relativePath, message };
@@ -22,10 +21,10 @@ function readableError(error) {
   return "Could not read this location.";
 }
 
-function resetPdfIndexForRoot(rootPath) {
-  if (indexedRootPath === rootPath) return;
-  indexedRootPath = rootPath;
-  pdfTextIndex.clear();
+function pdfIndexForRoot(rootPath) {
+  const key = path.resolve(rootPath);
+  if (!pdfIndexes.has(key)) pdfIndexes.set(key, new Map());
+  return pdfIndexes.get(key);
 }
 
 async function loadPdfJs() {
@@ -36,7 +35,16 @@ async function loadPdfJs() {
 async function extractPdfText(absolutePath) {
   const pdfjs = await loadPdfJs();
   const bytes = new Uint8Array(await fs.readFile(absolutePath));
-  const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true, useSystemFonts: true, standardFontDataUrl: STANDARD_FONT_DATA_URL });
+  // PDF.js's Node factory reads filesystem paths, not file:// URL strings.
+  const loadingTask = pdfjs.getDocument({
+    data: bytes,
+    useSystemFonts: true,
+    cMapUrl: path.join(PDFJS_DIRECTORY, "cmaps") + "/",
+    cMapPacked: true,
+    standardFontDataUrl: path.join(PDFJS_DIRECTORY, "standard_fonts") + "/",
+    wasmUrl: path.join(PDFJS_DIRECTORY, "wasm") + "/",
+    useWorkerFetch: false,
+  });
   try {
     const document = await loadingTask.promise;
     try {
@@ -57,6 +65,7 @@ async function extractPdfText(absolutePath) {
 }
 
 async function indexPdf(rootPath, absolutePath, relativePath, stats, issues) {
+  const pdfTextIndex = pdfIndexForRoot(rootPath);
   const existing = pdfTextIndex.get(relativePath);
   if (stats.size > MAX_PDF_BYTES) {
     pdfTextIndex.delete(relativePath);
@@ -134,7 +143,15 @@ function countEntries(entries) {
   );
 }
 
-async function scanVault(rootPath) {
+function scanVault(rootPath) {
+  const key = path.resolve(rootPath);
+  if (activeScans.has(key)) return activeScans.get(key);
+  const scanning = scanVaultContents(key).finally(() => activeScans.delete(key));
+  activeScans.set(key, scanning);
+  return scanning;
+}
+
+async function scanVaultContents(rootPath) {
   try {
     const stats = await fs.stat(rootPath);
     if (!stats.isDirectory()) {
@@ -145,7 +162,7 @@ async function scanVault(rootPath) {
     return { status: missing ? "missing" : "unavailable", rootPath, entries: [], totalFiles: 0, totalDirectories: 0, lastScannedAt: null, issues: [], message: missing ? "Vault folder does not exist." : readableError(error) };
   }
 
-  resetPdfIndexForRoot(rootPath);
+  const pdfTextIndex = pdfIndexForRoot(rootPath);
   const issues = [];
   const seenPdfPaths = new Set();
   const entries = await scanDirectory(rootPath, rootPath, "", issues, seenPdfPaths);
@@ -197,7 +214,8 @@ function countMatches(text, query) {
 }
 
 function searchPdfText(rootPath, rawQuery) {
-  if (rootPath !== indexedRootPath || typeof rawQuery !== "string") return [];
+  const pdfTextIndex = pdfIndexes.get(path.resolve(rootPath));
+  if (!pdfTextIndex || typeof rawQuery !== "string") return [];
   const query = rawQuery.trim().toLocaleLowerCase();
   if (!query) return [];
   return [...pdfTextIndex.entries()].flatMap(([relativePath, record]) => {
@@ -211,8 +229,7 @@ function searchPdfText(rootPath, rawQuery) {
 }
 
 function getIndexedPdfText(rootPath, relativePath) {
-  if (rootPath !== indexedRootPath) return null;
-  return pdfTextIndex.get(relativePath)?.text ?? null;
+  return pdfIndexes.get(path.resolve(rootPath))?.get(relativePath)?.text ?? null;
 }
 
 module.exports = { MAX_PDF_BYTES, getIndexedPdfText, readPdfFile, readVaultFile, resolveVaultFile, scanVault, searchPdfText };

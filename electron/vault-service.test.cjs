@@ -3,6 +3,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { cmapPdf } = require("../scripts/fixtures/cmap-pdf.cjs");
 const { MAX_PDF_BYTES, readPdfFile, readVaultFile, resolveVaultFile, scanVault, searchPdfText } = require("./vault-service.cjs");
 
 async function withVault(run) {
@@ -79,5 +80,33 @@ test("PDFs above the configured limit are visible but cannot be read or indexed"
     const snapshot = await scanVault(vaultPath);
     assert.equal(snapshot.entries[0]?.pdf?.textStatus, "too-large");
     await assert.rejects(() => readPdfFile(vaultPath, "large.pdf"), /100 MB/);
+  });
+});
+
+test("overlapping scans share work and keep same-named PDFs isolated by vault", async () => {
+  await withVault(async (alpha) => withVault(async (beta) => {
+    await fs.writeFile(path.join(alpha, "report.pdf"), minimalPdf("ALPHA research"));
+    await fs.writeFile(path.join(beta, "report.pdf"), minimalPdf("BETA research"));
+    const first = scanVault(alpha);
+    assert.equal(scanVault(alpha), first, "Concurrent callers must share the same scan");
+    const [a, b] = await Promise.all([first, scanVault(beta)]);
+    assert.equal(a.entries[0].pdf.textStatus, "ready");
+    assert.equal(b.entries[0].pdf.textStatus, "ready");
+    assert.equal(searchPdfText(alpha, "ALPHA").length, 1);
+    assert.equal(searchPdfText(alpha, "BETA").length, 0);
+    assert.equal(searchPdfText(beta, "BETA").length, 1);
+    assert.equal(searchPdfText(beta, "ALPHA").length, 0);
+    await fs.writeFile(path.join(alpha, "updated.md"), "Fresh scan");
+    assert.equal((await scanVault(alpha)).totalFiles, 2, "Completed snapshots must not be cached indefinitely");
+  }));
+});
+
+test("PDF indexing loads local character maps for non-embedded composite fonts", async () => {
+  await withVault(async (vaultPath) => {
+    await fs.writeFile(path.join(vaultPath, "mapped.pdf"), cmapPdf());
+    const snapshot = await scanVault(vaultPath);
+    assert.equal(snapshot.entries[0].pdf.textStatus, "ready");
+    assert.equal(searchPdfText(vaultPath, "日本").length, 1);
+    assert.deepEqual(snapshot.issues, []);
   });
 });

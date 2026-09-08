@@ -1,3 +1,5 @@
+> Current model integration design: [task-model-integration-architecture.md](./task-model-integration-architecture.md). Implementation and ownership: [model-integration-handoff.md](./model-integration-handoff.md). The earlier milestone narrative below is preserved as historical context; its next-step suggestions and implementation status may be superseded.
+
 # Engineering Context — Wonnyy V0.0.1-Amadeus
 
 ## 1. Engineering Objective

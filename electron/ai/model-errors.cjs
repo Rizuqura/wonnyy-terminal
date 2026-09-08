@@ -10,9 +10,15 @@ const MODEL_ERROR_CODES = Object.freeze({
   NOT_INSTALLED: "MODEL_NOT_INSTALLED",
   NOT_FOUND: "MODEL_NOT_FOUND",
   TIMEOUT: "MODEL_TIMEOUT",
+  CANCELLED: "MODEL_CANCELLED",
   INVALID_RESPONSE: "MODEL_INVALID_RESPONSE",
   PROVIDER: "PROVIDER_ERROR",
   INTERNAL: "MODEL_INTERNAL_ERROR",
+  BUSY: "MODEL_BUSY",
+  RESTART_REQUIRED: "MODEL_RESTART_REQUIRED",
+  STORAGE_INVALID: "MODEL_STORAGE_INVALID",
+  STORAGE_FAILED: "MODEL_STORAGE_FAILED",
+  INTERRUPTED: "MODEL_INTERRUPTED",
 });
 
 class ModelRuntimeError extends Error {
@@ -28,9 +34,24 @@ function serializeModelError(error) {
   if (error instanceof ModelRuntimeError) {
     return { code: error.code, message: error.message, details: error.details };
   }
+  if (
+    error?.name === "BrainScopeError" &&
+    typeof error.code === "string" &&
+    error.code.startsWith("BRAIN_")
+  ) {
+    return {
+      code: error.code,
+      message: error.message,
+      details:
+        error.details && typeof error.details === "object" ? error.details : {},
+    };
+  }
   return {
     code: MODEL_ERROR_CODES.INTERNAL,
-    message: error instanceof Error ? error.message : "An unexpected model runtime error occurred.",
+    message:
+      error instanceof Error
+        ? error.message
+        : "An unexpected model runtime error occurred.",
     details: {},
   };
 }

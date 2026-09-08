@@ -1,3 +1,5 @@
+> Current model integration design: [task-model-integration-architecture.md](./task-model-integration-architecture.md). Implementation and ownership: [model-integration-handoff.md](./model-integration-handoff.md). The earlier milestone narrative below is preserved as historical context; its next-step suggestions and implementation status may be superseded.
+
 # Wonnyy AI Integration Goal
 
 ## Overview
@@ -742,6 +744,18 @@ Purpose:
 
 ## M7.5 — Chat Runtime
 
+Status: **Complete — 2026-09-03 (initial non-streaming runtime)**
+
+Implemented:
+
+* Workspace and Planet View share one conversation state owned by `AppShell`.
+* The isolated `desktop.ai.chat()` bridge routes questions through the Electron orchestrator; the renderer receives no filesystem or direct Ollama authority.
+* Chat is enabled only for one available Active Context Markdown source and prevents duplicate submission while Qwen is running.
+* Successful answers show verified source links and the immutable run ID; source links open through the existing controlled vault API.
+* Offline, missing-model, timeout, Brain Scope, provider, and recording failures are presented as actionable errors with retry support.
+* The orchestrator assigns an 8K–32K bounded context window from the prepared scope size so medium Markdown documents are not silently truncated; answer generation remains concise for CPU-local Qwen.
+* Conversation state resets when the active vault changes. The first runtime is deliberately non-streaming; cancellation and streaming remain follow-up hardening.
+
 Goal:
 
 Connect the existing visual chat prototype to the execution engine.
@@ -1226,7 +1240,7 @@ One Markdown file
 → Provenance
 ```
 
-The next engineering target is **M7.5 — Chat Runtime** using the secured, attributed, and recorded execution path.
+The initial Amadeus AI integration path through **M7.5 is complete**. The next engineering target should be selected from streaming/cancellation hardening, broader context budgeting and retrieval, or the CSV analytics sequence below.
 
 Do not start with autonomous agents.
 

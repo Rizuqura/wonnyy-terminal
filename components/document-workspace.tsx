@@ -7,13 +7,17 @@ export function DocumentWorkspace({ file, error, onClose }: Readonly<{ file: Vau
 
   const segments = file.relativePath.split(/[\\/]+/);
   const isPdf = "data" in file;
+  if (isPdf) return <section className="document-pane document-pane-pdf">
+    <div className="tab-strip"><button className="active-tab" title={file.relativePath}>{file.name}<span className="tab-close" title="Close" onClick={() => onClose?.()}>×</span></button></div>
+    <PdfViewer file={file} />
+  </section>;
   return <section className="document-pane">
     <div className="tab-strip"><button className="active-tab">{file.name}<span className="tab-close" title="Close" onClick={() => onClose?.()}>×</span></button></div>
     <article className="document-scroll">
       <div className="document-inner">
         <div className="breadcrumb">{segments.slice(0, -1).join(" / ")}{segments.length > 1 ? " / " : ""}<b>{file.name}</b><span className="reading-pill">READING</span></div>
-        <header className="document-header"><h1>{stripExtension(file.name)}<span> — {isPdf ? "PDF document" : file.extension === ".csv" ? "Dataset" : "Markdown note"}</span></h1><p><b>{isPdf ? "PDF" : file.extension.toUpperCase()}</b> · {file.relativePath}</p></header>
-        {isPdf ? <PdfViewer file={file} /> : file.extension === ".csv" ? <CsvTable content={file.content} /> : <MarkdownContent content={file.content} />}
+        <header className="document-header"><h1>{stripExtension(file.name)}<span> — {file.extension === ".csv" ? "Dataset" : "Markdown note"}</span></h1><p><b>{file.extension.toUpperCase()}</b> · {file.relativePath}</p></header>
+        {file.extension === ".csv" ? <CsvTable content={file.content} /> : <MarkdownContent content={file.content} />}
       </div>
     </article>
   </section>;

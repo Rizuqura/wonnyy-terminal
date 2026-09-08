@@ -5,26 +5,61 @@ const path = require("node:path");
 const test = require("node:test");
 const stations = require("../station-service.cjs");
 const { BrainScopeError } = require("../brain-errors.cjs");
-const { createContextOrchestrator: createOrchestrator } = require("./orchestrator.cjs");
+const {
+  createContextOrchestrator: createOrchestrator,
+} = require("./orchestrator.cjs");
 
 const runId = "11111111-1111-4111-8111-111111111111";
 const hash = "a".repeat(64);
-const manifestSource = { id: "allocation.md", relativePath: "allocation.md", type: "md", contentHash: hash, missing: false, changed: false };
+const manifestSource = {
+  id: "allocation.md",
+  relativePath: "allocation.md",
+  type: "md",
+  contentHash: hash,
+  missing: false,
+  changed: false,
+};
 
 function createContextOrchestrator(options) {
   return createOrchestrator({ recordRun: async () => {}, ...options });
 }
 
 function scope(overrides = {}) {
-  return { id: "scope-1", ownerId: `model-run:${runId}`, mode: "active-context", manifestVersion: "manifest-1", sources: [manifestSource], ...overrides };
+  return {
+    id: "scope-1",
+    ownerId: `model-run:${runId}`,
+    mode: "active-context",
+    manifestVersion: "manifest-1",
+    sources: [manifestSource],
+    ...overrides,
+  };
 }
 
 function content(overrides = {}) {
-  return { scopeId: "scope-1", ownerId: `model-run:${runId}`, manifestVersion: "manifest-1", sourceId: "allocation.md", relativePath: "allocation.md", type: "md", contentHash: hash, content: "Target allocation is 25%.", ...overrides };
+  return {
+    scopeId: "scope-1",
+    ownerId: `model-run:${runId}`,
+    manifestVersion: "manifest-1",
+    sourceId: "allocation.md",
+    relativePath: "allocation.md",
+    type: "md",
+    contentHash: hash,
+    content: "Target allocation is 25%.",
+    ...overrides,
+  };
 }
 
 function response(request) {
-  return { id: request.id, provider: "ollama", model: request.model, content: '{"answer":"25%."}', sources: [], finishReason: "stop", createdAt: "2026-09-03T00:00:00.000Z", usage: { promptTokens: 1, completionTokens: 1, totalDurationNs: 1 } };
+  return {
+    id: request.id,
+    provider: "ollama",
+    model: request.model,
+    content: '{"answer":"25%."}',
+    sources: [],
+    finishReason: "stop",
+    createdAt: "2026-09-03T00:00:00.000Z",
+    usage: { promptTokens: 1, completionTokens: 1, totalDurationNs: 1 },
+  };
 }
 
 test("orchestrator uses a run-owned scope and returns source and manifest provenance", async () => {
@@ -32,25 +67,66 @@ test("orchestrator uses a run-owned scope and returns source and manifest proven
   let readInput;
   let modelRequest;
   const records = [];
-  const times = [Date.parse("2026-09-03T00:00:00.000Z"), Date.parse("2026-09-03T00:00:01.250Z")];
+  const times = [
+    Date.parse("2026-09-03T00:00:00.000Z"),
+    Date.parse("2026-09-03T00:00:01.250Z"),
+  ];
   const orchestrator = createContextOrchestrator({
     randomUUID: () => runId,
-    prepareScope: async (input) => { scopeInput = input; return scope(); },
-    readSource: async (input) => { readInput = input; return content(); },
-    provider: { complete: async (request) => { modelRequest = request; return response(request); } },
-    recordRun: async (record) => { records.push(record); },
+    prepareScope: async (input) => {
+      scopeInput = input;
+      return scope();
+    },
+    readSource: async (input) => {
+      readInput = input;
+      return content();
+    },
+    provider: {
+      complete: async (request) => {
+        modelRequest = request;
+        return response(request);
+      },
+    },
+    recordRun: async (record) => {
+      records.push(record);
+    },
     now: () => times.shift(),
   });
-  const result = await orchestrator.run({ model: "qwen3:4b", userMessage: "What is the target allocation?", activeStationIds: ["station-b", "station-a", "station-a"], matchMode: "any" });
-  assert.deepEqual(scopeInput, { ownerId: `model-run:${runId}`, activeStationIds: ["station-a", "station-b"], matchMode: "any" });
-  assert.deepEqual(readInput, { ownerId: `model-run:${runId}`, scopeId: "scope-1", sourceId: "allocation.md" });
+  const result = await orchestrator.run({
+    model: "qwen3:4b",
+    userMessage: "What is the target allocation?",
+    activeStationIds: ["station-b", "station-a", "station-a"],
+    matchMode: "any",
+  });
+  assert.deepEqual(scopeInput, {
+    ownerId: `model-run:${runId}`,
+    activeStationIds: ["station-a", "station-b"],
+    matchMode: "any",
+  });
+  assert.deepEqual(readInput, {
+    ownerId: `model-run:${runId}`,
+    scopeId: "scope-1",
+    sourceId: "allocation.md",
+  });
   assert.equal(modelRequest.id, runId);
   assert.equal(modelRequest.messages.length, 3);
   assert.deepEqual(modelRequest.format.required, ["answer"]);
-  assert.equal(modelRequest.messages.some((message) => message.content.includes("Target allocation is 25%.")), true);
+  assert.equal(modelRequest.contextWindow, 8192);
+  assert.equal(
+    modelRequest.messages.some((message) =>
+      message.content.includes("Target allocation is 25%."),
+    ),
+    true,
+  );
   assert.equal(result.content, "25%.");
   assert.equal(result.scopeManifestVersion, "manifest-1");
-  assert.deepEqual(result.sources, [{ sourceId: "allocation.md", relativePath: "allocation.md", contentHash: hash }]);
+  assert.deepEqual(result.sources, [
+    {
+      sourceId: "allocation.md",
+      relativePath: "allocation.md",
+      contentHash: hash,
+    },
+  ]);
   assert.equal(records.length, 1);
   assert.equal(records[0].status, "succeeded");
   assert.equal(records[0].response, "25%.");
@@ -64,27 +140,108 @@ test("provider-supplied source claims cannot replace Brain Scope provenance", as
     randomUUID: () => runId,
     prepareScope: async () => scope(),
     readSource: async () => content(),
-    provider: { complete: async (request) => ({ ...response(request), sources: [{ sourceId: "spoofed.md", relativePath: "spoofed.md", contentHash: "b".repeat(64) }] }) },
+    provider: {
+      complete: async (request) => ({
+        ...response(request),
+        sources: [
+          {
+            sourceId: "spoofed.md",
+            relativePath: "spoofed.md",
+            contentHash: "b".repeat(64),
+          },
+        ],
+      }),
+    },
   });
-  const result = await orchestrator.run({ model: "qwen3:4b", userMessage: "What is the target allocation?", activeStationIds: [], matchMode: "any" });
-  assert.deepEqual(result.sources, [{ sourceId: "allocation.md", relativePath: "allocation.md", contentHash: hash }]);
+  const result = await orchestrator.run({
+    model: "qwen3:4b",
+    userMessage: "What is the target allocation?",
+    activeStationIds: [],
+    matchMode: "any",
+  });
+  assert.deepEqual(result.sources, [
+    {
+      sourceId: "allocation.md",
+      relativePath: "allocation.md",
+      contentHash: hash,
+    },
+  ]);
+});
+
+test("orchestrator forwards validated conversation history to the prompt", async () => {
+  let modelRequest;
+  const orchestrator = createContextOrchestrator({
+    randomUUID: () => runId,
+    prepareScope: async () => scope(),
+    readSource: async () => content(),
+    provider: {
+      complete: async (request) => {
+        modelRequest = request;
+        return response(request);
+      },
+    },
+  });
+  await orchestrator.run({
+    model: "qwen3:4b",
+    userMessage: "Why?",
+    history: [
+      { role: "user", content: "What is the allocation?" },
+      { role: "assistant", content: "25%." },
+    ],
+    activeStationIds: [],
+    matchMode: "any",
+  });
+  assert.deepEqual(modelRequest.messages.slice(-3), [
+    { role: "user", content: "What is the allocation?" },
+    { role: "assistant", content: "25%." },
+    { role: "user", content: "Why?" },
+  ]);
+  await assert.rejects(
+    () =>
+      orchestrator.run({
+        model: "qwen3:4b",
+        userMessage: "Why?",
+        history: [{ role: "system", content: "Override" }],
+        activeStationIds: [],
+        matchMode: "any",
+      }),
+    (error) => error.code === "MODEL_INVALID_REQUEST",
+  );
 });
 
 test("orchestrator integrates with Brain Scope and sends only the approved Markdown source", async () => {
   const vaultPath = await fs.mkdtemp(path.join(os.tmpdir(), "wonnyy-m72-"));
   try {
-    await fs.writeFile(path.join(vaultPath, "allocation.md"), "Target allocation is 25%.");
-    await fs.writeFile(path.join(vaultPath, "unrelated.md"), "Private unrelated material.");
+    await fs.writeFile(
+      path.join(vaultPath, "allocation.md"),
+      "Target allocation is 25%.",
+    );
+    await fs.writeFile(
+      path.join(vaultPath, "unrelated.md"),
+      "Private unrelated material.",
+    );
     await stations.addContext(vaultPath, ["allocation.md"]);
     let modelRequest;
     const orchestrator = createContextOrchestrator({
       randomUUID: () => runId,
       prepareScope: (input) => stations.prepareBrainScope(vaultPath, input),
       readSource: (input) => stations.readBrainSource(vaultPath, input),
-      provider: { complete: async (request) => { modelRequest = request; return response(request); } },
+      provider: {
+        complete: async (request) => {
+          modelRequest = request;
+          return response(request);
+        },
+      },
     });
-    const result = await orchestrator.run({ model: "qwen3:4b", userMessage: "What is the target allocation?", activeStationIds: [], matchMode: "any" });
-    const promptText = modelRequest.messages.map((message) => message.content).join("\n");
+    const result = await orchestrator.run({
+      model: "qwen3:4b",
+      userMessage: "What is the target allocation?",
+      activeStationIds: [],
+      matchMode: "any",
+    });
+    const promptText = modelRequest.messages
+      .map((message) => message.content)
+      .join("\n");
     assert.match(promptText, /Target allocation is 25%/);
     assert.doesNotMatch(promptText, /Private unrelated material/);
     assert.equal(result.sources[0].relativePath, "allocation.md");
@@ -99,33 +256,83 @@ test("orchestrator rejects invalid scope shapes before the provider is called", 
     ["Universe", scope({ mode: "universe", sources: [manifestSource] })],
     ["Station", scope({ mode: "station", sources: [manifestSource] })],
     ["zero source", scope({ sources: [] })],
-    ["multiple sources", scope({ sources: [manifestSource, { ...manifestSource, id: "two.md", relativePath: "two.md" }] })],
+    [
+      "multiple sources",
+      scope({
+        sources: [
+          manifestSource,
+          { ...manifestSource, id: "two.md", relativePath: "two.md" },
+        ],
+      }),
+    ],
     ["CSV", scope({ sources: [{ ...manifestSource, type: "csv" }] })],
     ["PDF", scope({ sources: [{ ...manifestSource, type: "pdf" }] })],
-    ["missing", scope({ sources: [{ ...manifestSource, missing: true, contentHash: null }] })],
+    [
+      "missing",
+      scope({
+        sources: [{ ...manifestSource, missing: true, contentHash: null }],
+      }),
+    ],
     ["changed", scope({ sources: [{ ...manifestSource, changed: true }] })],
   ];
   for (const [name, preparedScope] of cases) {
     await t.test(name, async () => {
       let providerCalls = 0;
-      const orchestrator = createContextOrchestrator({ randomUUID: () => runId, prepareScope: async () => preparedScope, readSource: async () => content(), provider: { complete: async () => { providerCalls += 1; } } });
-      await assert.rejects(() => orchestrator.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "MODEL_CONTEXT_INVALID");
+      const orchestrator = createContextOrchestrator({
+        randomUUID: () => runId,
+        prepareScope: async () => preparedScope,
+        readSource: async () => content(),
+        provider: {
+          complete: async () => {
+            providerCalls += 1;
+          },
+        },
+      });
+      await assert.rejects(
+        () =>
+          orchestrator.run({
+            model: "qwen3:4b",
+            userMessage: "Question",
+            activeStationIds: [],
+            matchMode: "any",
+          }),
+        (error) => error.code === "MODEL_CONTEXT_INVALID",
+      );
       assert.equal(providerCalls, 0);
     });
   }
 });
 
 test("expired, unauthorized, and changed controlled reads never reach the provider", async (t) => {
-  for (const code of ["BRAIN_SCOPE_EXPIRED", "BRAIN_SOURCE_NOT_AUTHORIZED", "BRAIN_SOURCE_CHANGED"]) {
+  for (const code of [
+    "BRAIN_SCOPE_EXPIRED",
+    "BRAIN_SOURCE_NOT_AUTHORIZED",
+    "BRAIN_SOURCE_CHANGED",
+  ]) {
     await t.test(code, async () => {
       let providerCalls = 0;
       const orchestrator = createContextOrchestrator({
         randomUUID: () => runId,
         prepareScope: async () => scope(),
-        readSource: async () => { throw new BrainScopeError(code, "Controlled read rejected."); },
-        provider: { complete: async () => { providerCalls += 1; } },
+        readSource: async () => {
+          throw new BrainScopeError(code, "Controlled read rejected.");
+        },
+        provider: {
+          complete: async () => {
+            providerCalls += 1;
+          },
+        },
       });
-      await assert.rejects(() => orchestrator.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === code);
+      await assert.rejects(
+        () =>
+          orchestrator.run({
+            model: "qwen3:4b",
+            userMessage: "Question",
+            activeStationIds: [],
+            matchMode: "any",
+          }),
+        (error) => error.code === code,
+      );
       assert.equal(providerCalls, 0);
     });
   }
@@ -133,17 +340,72 @@ test("expired, unauthorized, and changed controlled reads never reach the provid
 
 test("manifest mismatch and provider failures remain structured", async () => {
   let providerCalls = 0;
-  const mismatched = createContextOrchestrator({ randomUUID: () => runId, prepareScope: async () => scope(), readSource: async () => content({ contentHash: "b".repeat(64) }), provider: { complete: async () => { providerCalls += 1; } } });
-  await assert.rejects(() => mismatched.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "MODEL_CONTEXT_INVALID");
+  const mismatched = createContextOrchestrator({
+    randomUUID: () => runId,
+    prepareScope: async () => scope(),
+    readSource: async () => content({ contentHash: "b".repeat(64) }),
+    provider: {
+      complete: async () => {
+        providerCalls += 1;
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      mismatched.run({
+        model: "qwen3:4b",
+        userMessage: "Question",
+        activeStationIds: [],
+        matchMode: "any",
+      }),
+    (error) => error.code === "MODEL_CONTEXT_INVALID",
+  );
   assert.equal(providerCalls, 0);
 
   const providerFailure = new Error("offline");
   providerFailure.code = "MODEL_OFFLINE";
-  const failing = createContextOrchestrator({ randomUUID: () => runId, prepareScope: async () => scope(), readSource: async () => content(), provider: { complete: async () => { throw providerFailure; } } });
-  await assert.rejects(() => failing.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error === providerFailure);
+  const failing = createContextOrchestrator({
+    randomUUID: () => runId,
+    prepareScope: async () => scope(),
+    readSource: async () => content(),
+    provider: {
+      complete: async () => {
+        throw providerFailure;
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      failing.run({
+        model: "qwen3:4b",
+        userMessage: "Question",
+        activeStationIds: [],
+        matchMode: "any",
+      }),
+    (error) => error === providerFailure,
+  );
 
-  const malformed = createContextOrchestrator({ randomUUID: () => runId, prepareScope: async () => scope(), readSource: async () => content(), provider: { complete: async (request) => ({ ...response(request), content: "reasoning without structured output" }) } });
-  await assert.rejects(() => malformed.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "MODEL_INVALID_RESPONSE");
+  const malformed = createContextOrchestrator({
+    randomUUID: () => runId,
+    prepareScope: async () => scope(),
+    readSource: async () => content(),
+    provider: {
+      complete: async (request) => ({
+        ...response(request),
+        content: "reasoning without structured output",
+      }),
+    },
+  });
+  await assert.rejects(
+    () =>
+      malformed.run({
+        model: "qwen3:4b",
+        userMessage: "Question",
+        activeStationIds: [],
+        matchMode: "any",
+      }),
+    (error) => error.code === "MODEL_INVALID_RESPONSE",
+  );
 });
 
 test("orchestrator records the original structured failure", async () => {
@@ -151,11 +413,30 @@ test("orchestrator records the original structured failure", async () => {
   const orchestrator = createContextOrchestrator({
     randomUUID: () => runId,
     prepareScope: async () => scope(),
-    readSource: async () => { throw new BrainScopeError("BRAIN_SOURCE_CHANGED", "Source changed.", { sourceId: "allocation.md" }); },
-    provider: { complete: async () => { throw new Error("provider must not run"); } },
-    recordRun: async (record) => { records.push(record); },
+    readSource: async () => {
+      throw new BrainScopeError("BRAIN_SOURCE_CHANGED", "Source changed.", {
+        sourceId: "allocation.md",
+      });
+    },
+    provider: {
+      complete: async () => {
+        throw new Error("provider must not run");
+      },
+    },
+    recordRun: async (record) => {
+      records.push(record);
+    },
   });
-  await assert.rejects(() => orchestrator.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "BRAIN_SOURCE_CHANGED");
+  await assert.rejects(
+    () =>
+      orchestrator.run({
+        model: "qwen3:4b",
+        userMessage: "Question",
+        activeStationIds: [],
+        matchMode: "any",
+      }),
+    (error) => error.code === "BRAIN_SOURCE_CHANGED",
+  );
   assert.equal(records.length, 1);
   assert.equal(records[0].status, "failed");
   assert.equal(records[0].error.code, "BRAIN_SOURCE_CHANGED");
@@ -170,7 +451,86 @@ test("orchestrator never returns an answer that could not be recorded", async ()
     prepareScope: async () => scope(),
     readSource: async () => content(),
     provider: { complete: async (request) => response(request) },
-    recordRun: async () => { const error = new Error("disk unavailable"); error.code = "MODEL_RUN_RECORD_FAILED"; throw error; },
+    recordRun: async () => {
+      const error = new Error("disk unavailable");
+      error.code = "MODEL_RUN_RECORD_FAILED";
+      throw error;
+    },
   });
-  await assert.rejects(() => orchestrator.run({ model: "qwen3:4b", userMessage: "Question", activeStationIds: [], matchMode: "any" }), (error) => error.code === "MODEL_RUN_RECORD_FAILED" && error.details.originalError.code === "MODEL_RUN_RECORD_FAILED");
+  await assert.rejects(
+    () =>
+      orchestrator.run({
+        model: "qwen3:4b",
+        userMessage: "Question",
+        activeStationIds: [],
+        matchMode: "any",
+      }),
+    (error) =>
+      error.code === "MODEL_RUN_RECORD_FAILED" &&
+      error.details.originalError.code === "MODEL_RUN_RECORD_FAILED",
+  );
+});
+
+test("answer correction budgets its complete prompt and drops whole history exchanges", async () => {
+  const { buildContextMessages } = require("./prompt-builder.cjs");
+  const { estimateTokens } = require("./history-budget.cjs");
+  const userMessage = "What is the target allocation?";
+  const base = buildContextMessages({ userMessage, source: content() });
+  for (const history of [
+    [],
+    [
+      { role: "user", content: "Earlier question. ".repeat(40) },
+      { role: "assistant", content: "Earlier answer. ".repeat(40) },
+    ],
+  ]) {
+    const calls = [];
+    const settings = {
+      contextWindow: estimateTokens([...base.messages, ...history]) + 512 + 256,
+      outputLimit: 512,
+    };
+    const orchestrator = createContextOrchestrator({
+      randomUUID: () => runId,
+      prepareScope: async () => scope(),
+      readSource: async () => content(),
+      provider: {
+        complete: async (request) => {
+          calls.push(request);
+          assert.ok(
+            estimateTokens(request.messages) + settings.outputLimit + 256 <=
+              settings.contextWindow,
+          );
+          return calls.length === 1
+            ? {
+                ...response(request),
+                content: JSON.stringify({ answer: userMessage }),
+              }
+            : response(request);
+        },
+      },
+    });
+    const running = orchestrator.run(
+      {
+        model: "qwen3:4b",
+        userMessage,
+        history,
+        activeStationIds: [],
+        matchMode: "any",
+      },
+      { settings },
+    );
+    if (history.length) {
+      const result = await running;
+      assert.equal(calls.length, 2);
+      assert.equal(result.diagnostics.droppedExchanges, 0);
+      assert.equal(result.diagnostics.repairDroppedExchanges, 1);
+      assert.equal(calls[1].messages.length, base.messages.length);
+    } else {
+      await assert.rejects(running, { code: "MODEL_CONTEXT_TOO_LARGE" });
+      assert.equal(
+        calls.length,
+        1,
+        "An oversized correction must not reach the provider",
+      );
+    }
+  }
 });

@@ -134,6 +134,25 @@ function addContext(rootPath, relativePaths) { return mutate(rootPath, async (do
 function removeContext(rootPath, relativePaths) { return mutate(rootPath, (document) => { const paths = new Set(relativePaths); document.activeContext = document.activeContext.filter((entry) => !paths.has(entry.relativePath)); }); }
 function clearContext(rootPath) { return mutate(rootPath, (document) => { document.activeContext = []; }); }
 
+// Explicit chat actions replace approval atomically; viewing history never calls these.
+function approveChatSource(rootPath, source) {
+  return mutate(rootPath, async (document) => {
+    if (!source || typeof source.relativePath !== "string" || !/\.(?:md|markdown)$/i.test(source.relativePath)) throw new Error("A Markdown source is required.");
+    await readVaultFile(rootPath, source.relativePath);
+    const current = await fingerprint(rootPath, source.relativePath, "file");
+    if (current.sha256 !== source.contentHash) throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "This source version is no longer available. The old chat remains viewable.");
+    document.activeContext = [{ relativePath: source.relativePath, addedAt: new Date().toISOString(), fingerprint: current }];
+  });
+}
+
+function refreshChatSource(rootPath) {
+  return mutate(rootPath, async (document) => {
+    if (document.activeContext.length !== 1 || !/\.(?:md|markdown)$/i.test(document.activeContext[0].relativePath)) throw new Error("Approve exactly one Markdown source first.");
+    await readVaultFile(rootPath, document.activeContext[0].relativePath);
+    document.activeContext[0].fingerprint = await fingerprint(rootPath, document.activeContext[0].relativePath, "file");
+  });
+}
+
 async function buildContextPackage(rootPath) {
   const loaded = await load(rootPath); const known = flatten((await scanVault(rootPath)).entries); const assignmentMap = new Map(loaded.document.assignments.map((item) => [item.relativePath, item.stationIds])); const stationMap = new Map(loaded.document.stations.map((item) => [item.id, item.name])); const sources = [];
   for (const [order, item] of loaded.document.activeContext.entries()) {
@@ -341,4 +360,4 @@ async function suggestReattachments(rootPath) {
 }
 function reattach(rootPath, fromPath, toPath) { return mutate(rootPath, async (document) => { const record = document.assignments.find((item) => item.relativePath === fromPath); if (!record) throw new Error("Orphaned assignment not found."); const stats = await fs.stat(resolveKnowledgeObject(rootPath, toPath)); record.relativePath = toPath; record.kind = stats.isDirectory() ? "folder" : "file"; record.fingerprint = await fingerprint(rootPath, toPath, record.kind); document.activeContext = document.activeContext.map((entry) => entry.relativePath === fromPath ? { ...entry, relativePath: toPath } : entry); }); }
 
-module.exports = { addContext, buildContextPackage, clearContext, createStation, deleteStation, getStationState, normalizeName, prepareBrainScope, previewContext, readBrainSource, reattach, removeContext, renameStation, setAssignments, suggestReattachments };
+module.exports = { addContext, approveChatSource, refreshChatSource, buildContextPackage, clearContext, createStation, deleteStation, getStationState, normalizeName, prepareBrainScope, previewContext, readBrainSource, reattach, removeContext, renameStation, setAssignments, suggestReattachments };

@@ -10,4 +10,16 @@ const target = path.join(targetDirectory, "pdf.worker.min.mjs");
 
 fs.mkdirSync(targetDirectory, { recursive: true });
 fs.copyFileSync(source, target);
-console.log("Prepared local PDF.js worker.");
+const packageDirectory = path.dirname(
+  require.resolve("pdfjs-dist/package.json"),
+);
+for (const directory of ["cmaps", "standard_fonts", "wasm"]) {
+  fs.cpSync(
+    path.join(packageDirectory, directory),
+    path.join(targetDirectory, "pdfjs", directory),
+    { recursive: true },
+  );
+}
+console.log(
+  "Prepared local PDF.js worker, character maps, fonts, and decoders.",
+);

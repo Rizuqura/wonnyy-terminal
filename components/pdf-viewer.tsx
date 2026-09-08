@@ -27,7 +27,16 @@ export function PdfViewer({ file }: Readonly<{ file: VaultPdfFile }>) {
       try {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdf.worker.min.mjs", window.location.href).toString();
-        const task = pdfjs.getDocument({ data: file.data.slice() });
+        const assetUrl = (directory: string) => new URL(`pdfjs/${directory}/`, window.location.href).toString();
+        const task = pdfjs.getDocument({
+          data: file.data.slice(),
+          cMapUrl: assetUrl("cmaps"),
+          cMapPacked: true,
+          standardFontDataUrl: assetUrl("standard_fonts"),
+          wasmUrl: assetUrl("wasm"),
+          // The main-thread loader also handles packaged file:// asset URLs.
+          useWorkerFetch: false,
+        });
         loadingTask = task;
         const loaded = await task.promise;
         loadedDocument = loaded;

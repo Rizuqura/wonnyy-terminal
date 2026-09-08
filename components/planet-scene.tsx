@@ -6,7 +6,7 @@ import { ancestorPath, computeLayout, computeStationLayout, subtreeIds } from ".
 import { PlanetNode } from "./planet-node";
 import { PlanetMinimap } from "./planet-minimap";
 import { PlanetControls } from "./planet-controls";
-import { ChatPanel } from "./chat-panel";
+import { ChatPanel, type ChatPanelProps } from "./chat-panel";
 
 export interface PlanetSceneProps {
   graph: PlanetGraph;
@@ -19,6 +19,7 @@ export interface PlanetSceneProps {
   activeContextIds?: ReadonlySet<string>;
   projectionIds?: ReadonlySet<string> | null;
   stationClusters?: readonly StationCluster[];
+  chatProps: Omit<ChatPanelProps, "variant">;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -31,7 +32,7 @@ function isSceneOverlay(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(".pmini, .pctrl, .chat-panel"));
 }
 
-export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId, onFocus, stationMatchIds = new Set(), activeContextIds = new Set(), projectionIds = null, stationClusters = [] }: Readonly<PlanetSceneProps>) {
+export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId, onFocus, stationMatchIds = new Set(), activeContextIds = new Set(), projectionIds = null, stationClusters = [], chatProps }: Readonly<PlanetSceneProps>) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [canvas, setCanvas] = useState({ w: 0, h: 0 });
@@ -170,6 +171,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
     const el = canvasRef.current;
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
+      if (isSceneOverlay(event.target)) return;
       event.preventDefault();
       const rect = el.getBoundingClientRect();
       const mx = event.clientX - rect.left;
@@ -380,7 +382,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
         </div>
 
         <PlanetMinimap graph={graph} layout={layout} viewport={viewport} focusId={focusId} asteroidsVisible={asteroidsVisible} onJump={jump} />
-        <ChatPanel variant="floating" />
+        <ChatPanel variant="floating" {...chatProps} />
         <PlanetControls
           onZoomIn={() => zoomBy(1.01)}
           onZoomOut={() => zoomBy(1 / 1.01)}

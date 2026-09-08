@@ -15,7 +15,12 @@
     "desktop:dist": "npm run build && electron-builder",
     "test:m72:live": "node scripts/m72-live-proof.cjs",
     "test:m74:live": "node scripts/m72-live-proof.cjs",
-    "test": "node --experimental-strip-types --test electron/vault-service.test.cjs electron/station-service.test.cjs electron/ai/prompt-builder.test.cjs electron/ai/orchestrator.test.cjs electron/ai/run-store.test.cjs electron/ai/providers/ollama-provider.test.cjs lib/planet-layout.test.cjs lib/planet-hit-testing.test.cjs"
+    "test": "node --experimental-strip-types --test electron/*.test.cjs electron/ai/*.test.cjs electron/ai/providers/*.test.cjs lib/*.test.cjs features/chat/*.test.cjs",
+    "typecheck": "tsc --noEmit",
+    "test:chat:live": "node scripts/chat-live-acceptance.cjs",
+    "test:chat:electron": "npm run build && node scripts/electron-chat-smoke.cjs",
+    "format:integration": "prettier --write \"features/**/*.{ts,tsx,cjs,css}\" \"electron/ai/**/*.cjs\" electron/main.cjs electron/preload.cjs types/ai.ts types/electron.d.ts components/app-shell.tsx components/chat-panel.tsx components/top-bar.tsx \"scripts/*chat*.cjs\" scripts/electron-smoke-main.cjs",
+    "format:check": "prettier --check \"features/**/*.{ts,tsx,cjs,css}\" \"electron/ai/**/*.cjs\" electron/main.cjs electron/preload.cjs types/ai.ts types/electron.d.ts components/app-shell.tsx components/chat-panel.tsx components/top-bar.tsx \"scripts/*chat*.cjs\" scripts/electron-smoke-main.cjs"
   },
   "dependencies": {
     "next": "^16.0.0",
@@ -32,7 +37,9 @@
     "cross-env": "^7.0.3",
     "electron": "^37.0.0",
     "electron-builder": "^26.0.0",
+    "playwright": "^1.63.0",
     "postcss": "^8.0.0",
+    "prettier": "^3.9.6",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
     "wait-on": "^8.0.0"

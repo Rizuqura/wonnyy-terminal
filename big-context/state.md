@@ -1,3 +1,7 @@
+> Current model integration design: [task-model-integration-architecture.md](./task-model-integration-architecture.md). Implementation and ownership: [model-integration-handoff.md](./model-integration-handoff.md). The earlier milestone narrative below is preserved as historical context; its next-step suggestions and implementation status may be superseded.
+
+> Verification on 2026-09-06: the restructure has 75 passing tests, a passing static build and Electron smoke, and 22 completed real Qwen3 4B turns across isolated sources, restart, and cancellation recovery. See [verification results and model-quality limits](./model-integration-verification.md). Qwen3 1.7B and Llama 3.2 3B were not installed and remain untested with real inference.
+
 # Wonnyy V0.0.3 — Amadeus Context Checkpoint
 
 ## Release declaration
@@ -8,7 +12,7 @@ Amadeus establishes Planet View as the authoritative map of knowledge that a fut
 
 ## Current milestone
 
-**M7.4 — Immutable model-run recording complete (2026-09-03).**
+**M7.5 — Initial local-model chat runtime complete (2026-09-03).**
 
 - Planet View now defines a deterministic effective Brain Scope: Active Context overrides active Station matches, which override the universal supported vault.
 - Scope preparation returns a content-free source manifest with provenance, hashes, Station membership, and token estimates. Opaque capabilities are owned by a specific run, expire after five minutes, and constrain controlled source reads in Electron.
@@ -30,6 +34,11 @@ Amadeus establishes Planet View as the authoritative map of knowledge that a fut
 - Run records preserve timing, scope/manifest identity, provider/model, prompt version, user question, available and actually read sources, verified hashes, response, finish reason, usage, and error metadata.
 - Records use exclusive atomic publication, cannot overwrite an existing run even under concurrency, remain outside Brain Scope, and never duplicate raw source content or the constructed prompt.
 - A successful answer is returned only after its audit record is durable. Validated internal read/list operations prepare history for the future chat runtime.
+- The Workspace and Planet View chat surfaces now share a real conversation state and call local Qwen only through the isolated Electron `desktop.ai.chat()` bridge.
+- Chat requires exactly one available Active Context Markdown source, prevents duplicate submissions, displays generation state, and resets when the selected vault changes.
+- Answers display verified source links and their recorded run identity. Structured Ollama, Brain Scope, provider, and recording failures are actionable and retryable.
+- Model context is sized from the approved Brain Scope within an 8K–32K bound, preventing the false unavailable response previously caused by truncating medium Markdown documents.
+- The initial chat path is intentionally non-streaming. Streaming and cancellation remain follow-up runtime hardening.
 - Active Stations render as separate named hubs with explicit hub-to-member lines. Shared objects connect to multiple hubs and settle between their context systems.
 
 ## Model-readiness audit
@@ -44,10 +53,10 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 - Markdown and CSV text access plus PDF text-layer extraction.
 - Visual Station networks that correspond to distinct semantic scopes.
 
-### Remaining before model execution
+### Remaining after initial model execution
 
-1. Present verified sources and connect the secured, recorded request path to the chat runtime with structured lifecycle handling.
-2. Add streaming, cancellation, and retry policy after the first non-streaming chat path is reliable.
+1. Add streaming and cancellation after the first non-streaming chat path is manually validated across representative vaults.
+2. Add run-history presentation and retention controls for longer research sessions.
 3. Add provider-aware tokenization, context budgeting, chunking, and retrieval so large vaults and large CSV files are not read wholesale.
 4. Avoid sequentially hashing and estimating every file on the Electron main path for each universal scope preparation; introduce bounded or incremental indexing.
 5. Add broader size policies, OCR or an explicit unreadable status for scanned PDFs, and accurate type handling for missing sources.
@@ -74,10 +83,10 @@ The knowledge boundary is strong enough to begin model integration, but the soft
 
 ## Verification at the Amadeus baseline
 
-- `npm test`: all 49 service, Brain Scope, prompt-builder, orchestrator, run-store, Ollama provider, layout, and hit-testing tests pass.
+- `npm test`: all 52 service, Brain Scope, prompt-builder, orchestrator, run-store, Ollama provider, chat-runtime, layout, and hit-testing tests pass.
 - `npm run test:m74:live`: local `qwen3:4b` returns exactly `25%` from one approved Markdown source with provenance and one successful immutable run record.
 - `npm run build`: production build passes and includes the local PDF.js worker.
 
 ## Next intended milestone
 
-Begin **M7.5 — Chat Runtime** by connecting the existing chat prototype to the secured, attributed, and recorded request path without granting renderer filesystem or Ollama authority.
+Manually validate the completed M7.5 chat with a real one-file Active Context. Then select the next phase: streaming/cancellation, run-history UX, broader retrieval, or CSV analytics.

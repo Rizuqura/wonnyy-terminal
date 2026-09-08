@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useConfirmation } from "../features/dialogs/use-confirmation";
 import type { StationMatchMode } from "../lib/station-projection";
 import type { BrainScope, ContextPackage, StationState } from "../types/electron";
 
@@ -25,6 +26,7 @@ type Props = {
 };
 
 export function StationPanel(props: Readonly<Props>) {
+  const { confirm, confirmation } = useConfirmation();
   const [name, setName] = useState(""); const [query, setQuery] = useState(""); const [packageNotice, setPackageNotice] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null); const [editingName, setEditingName] = useState("");
   const selectedAssignments = useMemo(() => props.selectedPaths.map((path) => props.state?.assignments.find((item) => item.relativePath === path)), [props.selectedPaths, props.state]);
@@ -34,9 +36,9 @@ export function StationPanel(props: Readonly<Props>) {
   const repairOrphans = async () => {
     const bridge = window.wonnyyDesktop?.stations; if (!bridge) return;
     const suggestions = await bridge.suggestions(); const actionable = suggestions.filter((item) => item.candidates.length === 1);
-    if (!actionable.length) { window.alert("No unambiguous moved-object matches were found. Assignments remain safely orphaned."); return; }
+    if (!actionable.length) { setPackageNotice("No unambiguous moved-object matches were found. Assignments remain safely orphaned."); return; }
     let changed = false;
-    for (const item of actionable) if (window.confirm(`Reattach ${item.relativePath} to ${item.candidates[0]}?`)) { await bridge.reattach(item.relativePath, item.candidates[0]); changed = true; }
+    for (const item of actionable) if (await confirm(`Reattach ${item.relativePath} to ${item.candidates[0]}?`, "Reattach source")) { await bridge.reattach(item.relativePath, item.candidates[0]); changed = true; }
     if (changed) window.location.reload();
   };
   return <div className="station-panel">
@@ -58,7 +60,7 @@ export function StationPanel(props: Readonly<Props>) {
         <button className={`station-assign${allAssigned ? " on" : mixed ? " mixed" : ""}`} disabled={!props.selectedPaths.length || props.busy || !props.state?.writable} onClick={() => props.onAssign(station.id, !allAssigned)} title="Assign to selected knowledge">{allAssigned ? "✓" : mixed ? "–" : "+"}</button>
         {editingId === station.id ? <input className="station-rename" autoFocus value={editingName} onChange={(event) => setEditingName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submitRename(station.id); if (event.key === "Escape") { setEditingId(null); setEditingName(""); } }} aria-label={`Rename ${station.name}`} /> : <span title={station.name}>{station.name}</span>}<small>{station.assignmentCount}</small>
         <button className="station-edit" onClick={() => editingId === station.id ? submitRename(station.id) : (setEditingId(station.id), setEditingName(station.name))}>{editingId === station.id ? "✓" : "✎"}</button>
-        <button className="station-edit" onClick={() => { if (window.confirm(`Delete Station “${station.name}” and remove all assignments?`)) props.onDelete(station.id); }}>×</button>
+        <button className="station-edit" onClick={async () => { if (await confirm(`Delete Station “${station.name}” and remove all assignments?`, "Delete Station")) props.onDelete(station.id); }}>×</button>
       </div>;
     })}</div>
     <div className="pd-rule" /><div className="pd-section-title">ACTIVE CONTEXT</div>
@@ -69,5 +71,6 @@ export function StationPanel(props: Readonly<Props>) {
     {(props.state?.assignments.some((entry) => entry.missing) ?? false) ? <><p className="station-error">Orphaned assignments are preserved until you confirm a match.</p><button className="station-secondary" onClick={() => void repairOrphans()}>FIND MOVED OBJECTS</button></> : null}
     {(props.state?.activeContext.length ?? 0) > 0 ? <><button className="station-secondary" onClick={props.onClearContext}>CLEAR ALL CONTEXT</button><button className="station-secondary" onClick={() => void props.onBuildPackage().then((value) => setPackageNotice(`${value.sources.length} sources · ~${value.estimatedTokens.toLocaleString()} tokens`))}>BUILD PACKAGE</button></> : null}
     {packageNotice ? <p className="context-summary">Ready: {packageNotice}</p> : null}
+    {confirmation}
   </div>;
 }
