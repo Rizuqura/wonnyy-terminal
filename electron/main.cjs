@@ -1,4 +1,11 @@
-const { app, BrowserWindow, dialog, shell, ipcMain } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  shell,
+  ipcMain,
+  safeStorage,
+} = require("electron");
 const path = require("path");
 const {
   readPdfFile,
@@ -11,6 +18,10 @@ const { serializeBrainError } = require("./brain-errors.cjs");
 const { OllamaProvider } = require("./ai/providers/ollama-provider.cjs");
 const { ChatService } = require("./ai/chat-service.cjs");
 const { ModelRegistry } = require("./ai/model-registry.cjs");
+const { ProviderRegistry } = require("./ai/provider-registry.cjs");
+const { CredentialStore } = require("./ai/credential-store.cjs");
+const { NvidiaProvider } = require("./ai/providers/nvidia-provider.cjs");
+const { GeminiProvider } = require("./ai/providers/gemini-provider.cjs");
 const { registerAiIpc } = require("./ai/ipc.cjs");
 const { ModelRuntimeError } = require("./ai/model-errors.cjs");
 
@@ -160,9 +171,16 @@ app.whenReady().then(() => {
     brainOperation(() => stations.readBrainSource(activeVaultPath, input)),
   );
   const provider = getOllamaProvider();
-  const registry = new ModelRegistry(provider, app.getPath("userData"));
+  const credentials = new CredentialStore(app.getPath("userData"), safeStorage);
+  const providers = new ProviderRegistry({
+    ollama: provider,
+    gemini: new GeminiProvider({ credentials }),
+    nvidia: new NvidiaProvider({ credentials }),
+  });
+  const registry = new ModelRegistry(providers, app.getPath("userData"));
   chatService = new ChatService({ provider, registry });
   registerAiIpc({
+    credentials,
     ipcMain,
     getVault: () => activeVaultPath,
     service: chatService,

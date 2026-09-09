@@ -241,9 +241,7 @@ class ChatService {
           "MODEL_CONTEXT_INVALID",
           "This chat belongs to a different approved source version. Start a new chat or explicitly resume its source.",
         );
-      const settings = await this.registry.validateSelection(
-        await this.registry.read(),
-      );
+      const settings = await this.registry.read();
       active.controller.signal.throwIfAborted();
       timer = setTimeout(
         () =>
@@ -255,6 +253,9 @@ class ChatService {
           ),
         settings.absoluteTimeoutMs,
       );
+      await this.registry.validateSelection(settings, {
+        signal: active.controller.signal,
+      });
       const history = [];
       for (const answer of conversation.messages.filter(
         (message) => message.role === "assistant",
@@ -309,7 +310,9 @@ class ChatService {
       const orchestrator = createContextOrchestrator({
         prepareScope: (scope) => this.knowledge.prepareBrainScope(root, scope),
         readSource: (source) => this.knowledge.readBrainSource(root, source),
-        provider: this.provider,
+        provider:
+          this.registry.providerFor?.(settings.providerId) ?? this.provider,
+        providerName: settings.providerId,
         recordRun: (record) => createModelRun(root, record),
       });
       await orchestrator.run(

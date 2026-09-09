@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { DocumentWorkspace } from "./document-workspace";
+import { ResizableChat } from "./resizable-chat";
 import { ChatPanel, type ChatPanelProps } from "./chat-panel";
 import { PlanetScene } from "./planet-scene";
 import { PlanetDetails } from "./planet-details";
@@ -75,6 +76,7 @@ export function AppShell() {
   const [view, setView] = useState<View>("planet");
   const [focusId, setFocusId] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(193);
+  const [chatWidth, setChatWidth] = useState(320);
   const [pdfSearchResults, setPdfSearchResults] = useState<VaultSearchResult[]>(
     [],
   );
@@ -481,7 +483,12 @@ export function AppShell() {
   return (
     <main
       className="app-shell"
-      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      style={
+        {
+          "--sidebar-width": `${sidebarWidth}px`,
+          "--chat-width": `${chatWidth}px`,
+        } as CSSProperties
+      }
     >
       <TopBar
         settingsOpen={settingsOpen === "general"}
@@ -489,7 +496,7 @@ export function AppShell() {
         onOpenSettings={() => setSettingsOpen("general")}
         onOpenAi={() => {
           setSettingsOpen("ai");
-          chat.refreshModels();
+          if (!chat.modelScan?.running) chat.refreshModels();
         }}
         view={view}
         onChangeView={(next) => {
@@ -518,8 +525,8 @@ export function AppShell() {
           </button>
           <h2>AI model setup</h2>
           <p>
-            Manage local models, generation settings, and readiness in AI
-            Terminal.
+            Manage local and online models, generation settings, and readiness
+            in AI Terminal.
           </p>
           <button onClick={() => setSettingsOpen("ai")}>
             Open AI Terminal
@@ -640,7 +647,7 @@ export function AppShell() {
         </div>
       ) : (
         <div
-          className={`workspace-grid${openedFile && "data" in openedFile && !workspaceError ? " workspace-grid-pdf" : ""}`}
+          className={`workspace-grid workspace-main${openedFile && "data" in openedFile && !workspaceError ? " workspace-grid-pdf" : ""}`}
         >
           {vaultSidebar}
           <DocumentWorkspace
@@ -652,7 +659,9 @@ export function AppShell() {
             }}
           />
           {!(openedFile && "data" in openedFile && !workspaceError) && (
-            <ChatPanel {...chatProps} />
+            <ResizableChat width={chatWidth} onResize={setChatWidth}>
+              <ChatPanel {...chatProps} />
+            </ResizableChat>
           )}
         </div>
       )}

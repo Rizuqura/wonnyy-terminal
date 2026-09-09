@@ -16,6 +16,16 @@ export type ModelRequest = {
   onContent?: (content: string) => void;
 };
 export type ModelErrorCode =
+  | "AUTH_REQUIRED"
+  | "AUTH_INVALID"
+  | "AUTH_STORAGE_UNAVAILABLE"
+  | "RATE_LIMITED"
+  | "PROVIDER_OFFLINE"
+  | "REMOTE_TIMEOUT"
+  | "REMOTE_SERVER_ERROR"
+  | "REMOTE_REQUEST_INVALID"
+  | "REMOTE_CONTENT_BLOCKED"
+  | "MODEL_UNAVAILABLE"
   | "MODEL_INVALID_REQUEST"
   | "MODEL_CONTEXT_INVALID"
   | "MODEL_CONTEXT_TOO_LARGE"
@@ -130,6 +140,7 @@ export type ContextIdentity = {
   sources: ModelSourceReference[];
 };
 export type ChatMessage = {
+  provider?: string;
   id: string;
   conversationId: string;
   role: "user" | "assistant";
@@ -158,6 +169,7 @@ export type Conversation = {
   attempts: ChatAttempt[];
 };
 export type ChatState =
+  | "REMOTE_CONNECTING"
   | "IDLE"
   | "CONTEXT_NEEDED"
   | "MODEL_OFFLINE"
@@ -173,7 +185,7 @@ export type ChatState =
   | "RESTART_REQUIRED";
 export type ModelSettings = {
   schemaVersion: 1;
-  providerId: "ollama";
+  providerId: "ollama" | "gemini" | "nvidia";
   modelId: string | null;
   contextWindow: number;
   outputLimit: number;
@@ -185,7 +197,7 @@ export type ModelSettings = {
   absoluteTimeoutMs: number;
 };
 export type ModelDescriptor = {
-  providerId: string;
+  providerId: ModelSettings["providerId"];
   modelId: string;
   displayName: string;
   location: "local" | "remote";
@@ -197,8 +209,19 @@ export type ModelDescriptor = {
   capabilities: string[];
   contextLength: number | null;
   warnings: string[];
+  pricingClass: "unknown";
+};
+export type ProviderStatus = {
+  id: ModelSettings["providerId"];
+  displayName: string;
+  location: "local" | "remote";
+  online: boolean;
+  error: ModelRuntimeErrorValue | null;
+  configured: boolean;
+  secureStorageAvailable?: boolean;
 };
 export type RegistryState = {
+  providers: ProviderStatus[];
   online: boolean;
   error: ModelRuntimeErrorValue | null;
   settings: ModelSettings;
@@ -236,12 +259,32 @@ export type ChatEvent = {
   diagnostics?: Record<string, unknown>;
 };
 export interface AiBridge {
+  checkRemoteModel(input: {
+    providerId: "gemini" | "nvidia";
+    model: string;
+  }): Promise<ModelCheckResult>;
+  stopModelChecks(): Promise<void>;
+  checkNvidiaModel(model: string): Promise<{
+    model: string;
+    passed: boolean;
+    latencyMs: number;
+    checkedAt: string;
+    message: string;
+    code?: string;
+  }>;
   handshake(version: number): Promise<{ apiVersion: number }>;
   getStatus(): Promise<ModelStatus>;
   listModels(): Promise<LocalModel[]>;
   testModel(model: string): Promise<ModelConnectivityTest>;
   models(): Promise<RegistryState>;
   settings(input: Partial<ModelSettings>): Promise<ModelSettings>;
+  saveCredential(input: {
+    providerId: "gemini" | "nvidia";
+    apiKey: string;
+  }): Promise<{ configured: boolean; secureStorageAvailable: boolean }>;
+  removeCredential(input: {
+    providerId: "gemini" | "nvidia";
+  }): Promise<{ configured: boolean; secureStorageAvailable: boolean }>;
   context(input: ScopeSelection): Promise<ContextIdentity>;
   listConversations(): Promise<Conversation[]>;
   createConversation(input: ScopeSelection): Promise<Conversation>;
@@ -257,3 +300,12 @@ export interface AiBridge {
   cancel(requestId?: string): Promise<boolean>;
   onEvent(callback: (event: ChatEvent) => void): () => void;
 }
+export type ModelCheckResult = {
+  providerId: "gemini" | "nvidia";
+  model: string;
+  passed: boolean;
+  latencyMs: number;
+  checkedAt: string;
+  message: string;
+  code?: string;
+};

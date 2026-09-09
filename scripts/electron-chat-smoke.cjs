@@ -83,7 +83,13 @@ async function main() {
   let page;
   const errors = [];
   const checks = [];
+  const addCheck = checks.push.bind(checks);
+  checks.push = (...items) => {
+    process.stdout.write(`PASS: ${items.join("; ")}\n`);
+    return addCheck(...items);
+  };
   async function launch() {
+    process.stdout.write("Launching local desktop regression\n");
     const env = {
       ...process.env,
       WONNYY_VAULT_PATH: root,
@@ -105,7 +111,7 @@ async function main() {
       void dialog.dismiss();
     });
     await page.getByRole("textbox", { name: "Chat question" }).waitFor();
-    await page.waitForFunction(() => window.wonnyyDesktop?.apiVersion === 8);
+    await page.waitForFunction(() => window.wonnyyDesktop?.apiVersion === 11);
   }
   async function approve(file) {
     const clear = page.getByRole("button", {
@@ -308,8 +314,8 @@ async function main() {
       .click();
     await page.waitForFunction(() =>
       document
-        .querySelector(".model-settings")
-        ?.textContent.includes("Active model: qwen3:1.7b"),
+        .querySelector(".model-settings .model-active strong")
+        ?.textContent.includes("qwen3:1.7b"),
     );
     await page.getByLabel("Output limit", { exact: true }).fill("1024");
     await page

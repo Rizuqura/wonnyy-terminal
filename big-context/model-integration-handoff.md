@@ -1,5 +1,7 @@
 # Model integration engineering handoff
 
+> Current online extension: [online-integration-handoff.md](./online-integration-handoff.md). Gemini now shares the authorized chat pipeline with Ollama; IPC is version 9 and the prompt is v5. The local-runtime details below describe the preceding checkpoint where not explicitly updated.
+
 The intended design is defined by [task-model-integration-architecture.md](./task-model-integration-architecture.md). This document describes the implementation. Earlier task notes and the archived README remain historical records, not instructions to restart completed milestones.
 
 ## Ownership and request flow

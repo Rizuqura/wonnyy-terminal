@@ -63,10 +63,13 @@ export function ChatPanel({
     );
     let previousModel: string | undefined;
     return (chat.conversation?.messages ?? []).map((message) => {
+      const identity = message.model
+        ? `${message.provider ?? "ollama"}/${message.model}`
+        : undefined;
       const modelChanged = Boolean(
-        message.model && previousModel && message.model !== previousModel,
+        identity && previousModel && identity !== previousModel,
       );
-      if (message.model) previousModel = message.model;
+      if (identity) previousModel = identity;
       return { message, modelChanged, attempt: attempts.get(message.id) };
     });
   }, [chat.conversation]);
@@ -201,7 +204,7 @@ export function ChatPanel({
       ref={panelRef}
       style={floatingStyle}
       className={`chat-panel${isFloating ? " chat-panel-floating" : ""}${isFloating && isMinimized ? " chat-panel-minimized" : ""}`}
-      aria-label="Wonnyy local model chat"
+      aria-label="Wonnyy model chat"
       onPointerDown={(event) => event.stopPropagation()}
       onPointerMove={(event) => event.stopPropagation()}
       onPointerUp={(event) => event.stopPropagation()}
@@ -236,9 +239,24 @@ export function ChatPanel({
       </div>
       <div className="chat-context">
         <span>
-          LOCAL ·{" "}
-          {chat.registry?.settings.modelId ?? "Choose a model in Settings"}
+          {chat.registry?.settings.providerId !== "ollama" && !!chat.registry
+            ? `ONLINE · ${chat.registry?.settings.providerId === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
+            : "LOCAL · Ollama"}{" "}
+          · {chat.registry?.settings.modelId ?? "Choose a model in Settings"}
         </span>
+        <p className="chat-privacy">
+          {chat.registry?.settings.providerId !== "ollama" && !!chat.registry
+            ? `Approved source, your question, and included conversation history are sent to ${chat.registry?.settings.providerId === "nvidia" ? "NVIDIA" : "Google Gemini"}.`
+            : "Inference runs on this device."}
+        </p>
+        <p className="chat-memory">
+          Model memory: up to 12 recent exchanges, fewer when the context limit
+          is reached. Saved history remains available.
+          {typeof chat.runtime.diagnostics?.droppedExchanges === "number" &&
+          chat.runtime.diagnostics.droppedExchanges > 0
+            ? ` Last answer omitted ${chat.runtime.diagnostics.droppedExchanges} earlier exchanges.`
+            : ""}
+        </p>
         <strong>
           Active Context:{" "}
           {chat.context?.sources[0].relativePath ?? "None ready"}
@@ -299,7 +317,11 @@ export function ChatPanel({
           >
             {modelChanged && (
               <div className="chat-model-boundary">
-                Model changed to {message.model}
+                Model changed to{" "}
+                {message.provider === "gemini" || message.provider === "nvidia"
+                  ? `ONLINE · ${message.provider === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
+                  : "LOCAL · Ollama"}{" "}
+                · {message.model}
               </div>
             )}
             <span className="chat-message-role">

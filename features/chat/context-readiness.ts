@@ -36,7 +36,7 @@ export function chatErrorMessage(error: unknown): string {
       ? error.code
       : null;
   const message =
-    error instanceof Error ? error.message : "The local model request failed.";
+    error instanceof Error ? error.message : "The model request failed.";
   if (code === "MODEL_OFFLINE")
     return "Ollama is offline. Start Ollama, then retry.";
   if (code === "MODEL_NOT_FOUND")

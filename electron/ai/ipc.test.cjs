@@ -4,6 +4,51 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const path = require("node:path");
 const { API_VERSION, registerAiIpc } = require("./ipc.cjs");
+const { ModelRuntimeError } = require("./model-errors.cjs");
+
+test("credential IPC requires compatibility, validates secret inputs without echoing them, and reserves idle admission", async () => {
+  const handlers = new Map();
+  let busy = false,
+    writes = 0;
+  registerAiIpc({
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    service: {
+      exclusive: async (operation) => {
+        if (busy) throw new ModelRuntimeError("MODEL_BUSY", "Busy");
+        return operation();
+      },
+    },
+    credentials: {
+      save: async () => {
+        writes++;
+        return { configured: true };
+      },
+    },
+  });
+  const event = { sender: { id: 3 } };
+  const call = (input) => handlers.get("ai:saveCredential")(event, input);
+  const input = { providerId: "gemini", apiKey: "secret-test-key" };
+  assert.equal((await call(input)).error.code, "MODEL_RESTART_REQUIRED");
+  handlers.get("ai:handshake")(event, API_VERSION);
+  const invalid = await call({
+    ...input,
+    endpoint: "https://unapproved.invalid",
+  });
+  assert.equal(invalid.error.code, "MODEL_INVALID_REQUEST");
+  assert.doesNotMatch(JSON.stringify(invalid), /secret-test-key/);
+  busy = true;
+  assert.equal((await call(input)).error.code, "MODEL_BUSY");
+  assert.equal(writes, 0);
+  busy = false;
+  assert.deepEqual(await call(input), {
+    ok: true,
+    value: { configured: true },
+  });
+  handlers.get("ai:handshake")(event, API_VERSION - 1);
+  assert.equal((await call(input)).error.code, "MODEL_RESTART_REQUIRED");
+  assert.equal(writes, 1);
+  assert.equal(handlers.has("ai:getCredential"), false);
+});
 
 test("preload and renderer agree with main; handshake gates versioned IPC", async () => {
   const handlers = new Map();

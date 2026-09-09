@@ -2,6 +2,9 @@ const path = require("node:path");
 const { readJson, writeJson, serialQueue } = require("./json-store.cjs");
 const { ModelRuntimeError } = require("./model-errors.cjs");
 
+const { ProviderRegistry } = require("./provider-registry.cjs");
+const { parse, settingsSchema } = require("./schemas.cjs");
+
 const DEFAULTS = Object.freeze({
   schemaVersion: 1,
   providerId: "ollama",
@@ -22,47 +25,15 @@ const PROFILES = {
 };
 
 function validateSettings(value) {
-  if (
-    !value ||
-    Object.keys(value).some((key) => !(key in DEFAULTS)) ||
-    value.schemaVersion !== 1 ||
-    value.providerId !== "ollama" ||
-    !(
-      value.modelId === null ||
-      (typeof value.modelId === "string" && value.modelId.length <= 200)
-    ) ||
-    !Number.isInteger(value.contextWindow) ||
-    value.contextWindow < 2048 ||
-    value.contextWindow > 32768 ||
-    !Number.isInteger(value.outputLimit) ||
-    value.outputLimit < 128 ||
-    value.outputLimit > 8192 ||
-    value.outputLimit + 512 >= value.contextWindow ||
-    !Number.isFinite(value.temperature) ||
-    value.temperature < 0 ||
-    value.temperature > 2 ||
-    typeof value.streaming !== "boolean" ||
-    !Number.isInteger(value.keepAliveSeconds) ||
-    value.keepAliveSeconds < 0 ||
-    value.keepAliveSeconds > 3600 ||
-    ["loadTimeoutMs", "inactivityTimeoutMs", "absoluteTimeoutMs"].some(
-      (key) =>
-        !Number.isInteger(value[key]) ||
-        value[key] < 1000 ||
-        value[key] > 1800000,
-    )
-  ) {
-    throw new ModelRuntimeError(
-      "MODEL_INVALID_REQUEST",
-      "Invalid model settings or generation limits.",
-    );
-  }
-  return structuredClone(value);
+  return parse(settingsSchema, value);
 }
 
 class ModelRegistry {
   constructor(provider, settingsDirectory) {
-    this.provider = provider;
+    this.providers =
+      provider instanceof ProviderRegistry
+        ? provider
+        : new ProviderRegistry({ ollama: provider });
     this.file = path.join(settingsDirectory, "model-settings.json");
     this.queue = serialQueue();
   }
@@ -71,39 +42,81 @@ class ModelRegistry {
   }
   async state() {
     let settings = await this.read();
-    const status = await this.provider.getStatus();
-    const models = status.models.map((model) => ({
-      providerId: "ollama",
-      modelId: model.name,
-      displayName: model.name,
-      location: "local",
-      installed: true,
-      available: true,
-      active: model.name === settings.modelId,
-      profile: PROFILES[model.name] ?? "unprofiled",
-      recommended: model.name === "qwen3:4b",
-      capabilities: model.capabilities,
-      contextLength: model.contextLength,
-      warnings:
-        model.size > 4_500_000_000
-          ? ["High memory use on an 8 GB device."]
-          : [],
-    }));
+    const statuses = await Promise.all(
+      this.providers.entries().map(async ([id, provider]) => ({
+        id,
+        ...(await provider.getStatus()),
+      })),
+    );
+    const models = statuses.flatMap((status) =>
+      status.models.map((model) => ({
+        providerId: status.id,
+        modelId: model.name,
+        displayName: model.displayName ?? model.name,
+        location: status.id === "ollama" ? "local" : "remote",
+        installed: status.id === "ollama",
+        available: true,
+        active:
+          status.id === settings.providerId && model.name === settings.modelId,
+        profile:
+          status.id === "ollama"
+            ? (PROFILES[model.name] ?? "unprofiled")
+            : "online",
+        recommended: status.id === "ollama" && model.name === "qwen3:4b",
+        pricingClass: "unknown",
+        capabilities: model.capabilities,
+        contextLength: model.contextLength,
+        warnings:
+          status.id === "ollama" && model.size > 4_500_000_000
+            ? ["High memory use on an 8 GB device."]
+            : status.id === "nvidia"
+              ? ["Catalog listing only; run Check model to verify inference."]
+              : [],
+      })),
+    );
     if (
+      settings.providerId === "ollama" &&
       !settings.modelId &&
-      models.some((model) => model.modelId === "qwen3:4b")
+      models.some(
+        (model) =>
+          model.providerId === "ollama" && model.modelId === "qwen3:4b",
+      )
     ) {
       settings = await this.save({ modelId: "qwen3:4b" });
     }
+    const selected = statuses.find(
+      (status) => status.id === settings.providerId,
+    );
     return {
-      online: status.online,
-      error: status.error,
+      online: selected?.online ?? false,
+      error: selected?.error ?? null,
       settings,
+      providers: statuses.map(
+        ({ id, online, error, configured, secureStorageAvailable }) => ({
+          id,
+          displayName:
+            id === "ollama"
+              ? "Ollama"
+              : id === "nvidia"
+                ? "NVIDIA NIM"
+                : "Gemini",
+          location: id === "ollama" ? "local" : "remote",
+          online,
+          error: error ?? null,
+          configured: configured ?? id === "ollama",
+          secureStorageAvailable,
+        }),
+      ),
       models: models.map((model) => ({
         ...model,
-        active: model.modelId === settings.modelId,
+        active:
+          model.providerId === settings.providerId &&
+          model.modelId === settings.modelId,
       })),
     };
+  }
+  providerFor(id) {
+    return this.providers.get(id);
   }
   save(patch) {
     return this.queue(async () => {
@@ -118,22 +131,26 @@ class ModelRegistry {
       return settings;
     });
   }
-  async validateSelection(settings) {
+  async validateSelection(settings, options = {}) {
+    settings = validateSettings(settings);
     if (!settings.modelId)
       throw new ModelRuntimeError(
         "MODEL_NOT_FOUND",
-        "Select an installed local model in Settings.",
+        "Select an available model in AI Terminal.",
       );
-    const models = await this.provider.listModels();
+    const provider = this.providerFor(settings.providerId);
+    const models = await provider.listModels(options);
     const selected = models.find((model) => model.name === settings.modelId);
     if (!selected)
       throw new ModelRuntimeError(
-        "MODEL_NOT_FOUND",
-        `The selected model ${settings.modelId} is not installed. Refresh Models in Settings.`,
+        settings.providerId !== "ollama"
+          ? "MODEL_UNAVAILABLE"
+          : "MODEL_NOT_FOUND",
+        `The selected model ${settings.modelId} is unavailable. Refresh Models in AI Terminal.`,
       );
     const details =
-      typeof this.provider.describeModel === "function"
-        ? await this.provider.describeModel(settings.modelId)
+      typeof provider.describeModel === "function"
+        ? await provider.describeModel(settings.modelId)
         : selected;
     if (
       details.capabilities?.length &&
@@ -147,6 +164,19 @@ class ModelRegistry {
       throw new ModelRuntimeError(
         "MODEL_CONTEXT_TOO_LARGE",
         `This model supports at most ${details.contextLength} context tokens.`,
+      );
+    if (details.outputLimit && settings.outputLimit > details.outputLimit)
+      throw new ModelRuntimeError(
+        "MODEL_INVALID_REQUEST",
+        "The output limit exceeds this model's capability.",
+      );
+    if (
+      details.maxTemperature !== undefined &&
+      settings.temperature > details.maxTemperature
+    )
+      throw new ModelRuntimeError(
+        "MODEL_INVALID_REQUEST",
+        "Temperature exceeds this model's capability.",
       );
     return settings;
   }

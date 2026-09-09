@@ -23,7 +23,7 @@ async function invokeModel(channel, input) {
 // Future desktop capabilities must be exposed here deliberately, not by giving
 // renderer components unrestricted Node.js or filesystem access.
 contextBridge.exposeInMainWorld("wonnyyDesktop", {
-  apiVersion: 8,
+  apiVersion: 11,
   platform: process.platform,
   vault: {
     getSnapshot: () => ipcRenderer.invoke("vault:getSnapshot"),
@@ -57,7 +57,12 @@ contextBridge.exposeInMainWorld("wonnyyDesktop", {
   ai: {
     handshake: (version) => ipcRenderer.invoke("ai:handshake", version),
     models: () => invokeModel("ai:models"),
+    checkRemoteModel: (input) => invokeModel("ai:checkRemoteModel", input),
+    stopModelChecks: () => invokeModel("ai:stopModelChecks"),
+    checkNvidiaModel: (model) => invokeModel("ai:checkNvidiaModel", model),
     settings: (input) => invokeModel("ai:settings", input),
+    saveCredential: (input) => invokeModel("ai:saveCredential", input),
+    removeCredential: (input) => invokeModel("ai:removeCredential", input),
     context: (input) => invokeModel("ai:context", input),
     listConversations: () => invokeModel("ai:listConversations"),
     createConversation: (input) => invokeModel("ai:createConversation", input),

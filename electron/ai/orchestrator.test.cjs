@@ -521,7 +521,9 @@ test("answer correction budgets its complete prompt and drops whole history exch
     if (history.length) {
       const result = await running;
       assert.equal(calls.length, 2);
-      assert.equal(result.diagnostics.droppedExchanges, 0);
+      assert.equal(result.diagnostics.initialDroppedExchanges, 0);
+      assert.equal(result.diagnostics.droppedExchanges, 1);
+      assert.equal(result.diagnostics.includedExchanges, 0);
       assert.equal(result.diagnostics.repairDroppedExchanges, 1);
       assert.equal(calls[1].messages.length, base.messages.length);
     } else {

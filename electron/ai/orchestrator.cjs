@@ -84,7 +84,7 @@ function validateRequest(rawRequest) {
   if (typeof rawRequest.model !== "string" || !rawRequest.model.trim())
     throw new ModelRuntimeError(
       MODEL_ERROR_CODES.INVALID_REQUEST,
-      "A local model name is required.",
+      "A model name is required.",
       { field: "model" },
     );
   if (
@@ -157,7 +157,9 @@ function createContextOrchestrator({
       const request = validateRequest(rawRequest);
       const runId = options.runId ?? randomUUID();
       const settings = { ...DEFAULTS, ...options.settings };
-      const diagnostics = {};
+      const diagnostics = {
+        executionLocation: providerName === "ollama" ? "local" : "remote",
+      };
       // Share one retry across loading, initial generation and answer repair.
       // The ChatService signal still owns the original absolute deadline.
       const recoverTimeout = async (state, operation) => {
@@ -263,6 +265,7 @@ function createContextOrchestrator({
         const budget = budgetHistory(base.messages, request.history, settings);
         Object.assign(diagnostics, budget.diagnostics);
         diagnostics.droppedExchanges += options.earlierExchangesDropped ?? 0;
+        diagnostics.includedExchanges = budget.history.length / 2;
         const prompt = promptBuilder({
           userMessage: request.userMessage,
           history: budget.history,
@@ -270,7 +273,9 @@ function createContextOrchestrator({
         });
         promptVersion = prompt.promptVersion;
         if (options.prepareModel && typeof provider.prepare === "function") {
-          stage("MODEL_LOADING");
+          stage(
+            providerName === "ollama" ? "MODEL_LOADING" : "REMOTE_CONNECTING",
+          );
           await measure("modelLoadMs", () =>
             recoverTimeout("MODEL_LOADING", () =>
               provider.prepare(request.model, settings, options.signal),
@@ -344,6 +349,9 @@ function createContextOrchestrator({
           diagnostics.repairDroppedExchanges =
             repairBudget.diagnostics.droppedExchanges +
             (options.earlierExchangesDropped ?? 0);
+          diagnostics.initialDroppedExchanges = diagnostics.droppedExchanges;
+          diagnostics.droppedExchanges = diagnostics.repairDroppedExchanges;
+          diagnostics.includedExchanges = repairBudget.history.length / 2;
           const repairedMessages = withCorrection(
             promptBuilder({
               userMessage: request.userMessage,

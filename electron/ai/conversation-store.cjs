@@ -82,6 +82,8 @@ function validateConversation(value) {
   )) {
     if (
       typeof message.model !== "string" ||
+      (message.provider !== undefined &&
+        !["ollama", "gemini", "nvidia"].includes(message.provider)) ||
       !value.attempts.some(
         (attempt) =>
           attempt.runId === message.runId &&
@@ -115,6 +117,7 @@ function applyRun(conversation, attempt, record) {
       userMessageId: attempt.userMessageId,
       sources: record.sourcesActuallyRead,
       model: record.model,
+      provider: record.provider,
     });
   }
 }

@@ -1,6 +1,6 @@
 import type { AiBridge } from "../../types/ai";
 
-export const AI_API_VERSION = 8;
+export const AI_API_VERSION = 11;
 
 export async function connectAi(): Promise<AiBridge> {
   const desktop = window.wonnyyDesktop;

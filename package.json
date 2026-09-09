@@ -18,6 +18,8 @@
     "test": "node --experimental-strip-types --test electron/*.test.cjs electron/ai/*.test.cjs electron/ai/providers/*.test.cjs lib/*.test.cjs features/chat/*.test.cjs",
     "typecheck": "tsc --noEmit",
     "test:chat:live": "node scripts/chat-live-acceptance.cjs",
+    "test:chat:online": "node scripts/chat-live-acceptance.cjs --gemini",
+    "test:chat:online:electron": "npm run build && node scripts/electron-online-chat-smoke.cjs",
     "test:chat:electron": "npm run build && node scripts/electron-chat-smoke.cjs",
     "format:integration": "prettier --write \"features/**/*.{ts,tsx,cjs,css}\" \"electron/ai/**/*.cjs\" electron/main.cjs electron/preload.cjs types/ai.ts types/electron.d.ts components/app-shell.tsx components/chat-panel.tsx components/top-bar.tsx \"scripts/*chat*.cjs\" scripts/electron-smoke-main.cjs",
     "format:check": "prettier --check \"features/**/*.{ts,tsx,cjs,css}\" \"electron/ai/**/*.cjs\" electron/main.cjs electron/preload.cjs types/ai.ts types/electron.d.ts components/app-shell.tsx components/chat-panel.tsx components/top-bar.tsx \"scripts/*chat*.cjs\" scripts/electron-smoke-main.cjs"
@@ -26,7 +28,8 @@
     "next": "^16.0.0",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
