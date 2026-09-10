@@ -1,5 +1,61 @@
 
-# Wonnyy V0.0.1-Amadeus — MVP Tasks
+# Wonnyy implementation tasks
+
+## Current execution order
+
+Updated 2026-09-10. Authority: [Context Windows & Human-Controlled Context Engineering](./context-engineering-experience.md). Current implementation evidence: [state.md](./state.md) and [September 10 audit](./project-audit-2026-09-10.md).
+
+**Roadmap: M8 → M9 → M9.5 → M10 → M11. Immediate work: M9-A context controls, independently of unresolved M8 acceptance.** M9-B model consumption follows acceptance of the controls. The tasks below are planned work, not delivered runtime behavior.
+
+### M8 - Chat reliability: acceptance pending
+
+- [ ] Review ten natural turns on each of two sources using the chosen real model, including relevance, grounding, instruction following and latency.
+- [ ] Verify return to the original conversation, restart, provider/model switching, more than 12 exchanges, source updates, cancellation and recovery.
+- [ ] Resolve reproduced failures and record acceptance against agreed quality/latency expectations. Mock success and starred sample checks do not close this gate.
+
+### M9-A - Context control experience: immediate target
+
+Implemented selection foundation: shared Explorer/Planet multi-selection, Planet rectangle selection with additive modifiers and cancellation, selected counts, pan alternatives, and a control guide above Asteroid Visible. Existing Station assignment can apply to the selected group. This is partial progress toward the bulk-arrangement task below; named Context Windows and their controls are still absent.
+
+The user has prioritized working, comfortable controls before model consumption. M8 acceptance remains open and does not block this independent phase. Follow [the M9-A execution specification](./context-engineering-experience.md#5-immediate-execution-scope---controls-before-model-consumption).
+
+- [ ] Define and persist vault-scoped named Context Windows, including reviewed source membership, group origins, pins, budget, version and change-detection metadata.
+- [ ] Add create, rename, switch and reopen controls in a visible context panel, with explicit save/error feedback.
+- [ ] Add multi-selection and bulk arrangement: shared Explorer/Planet selection, source-list checkboxes/ranges, selected counts, and Add to existing/new Context Window with one review. Preserve selection when review is cancelled.
+- [ ] Add bulk authorize, pin/unpin and remove/undo. Deduplicate overlapping groups, disclose hidden selections, and keep filtered Select all scoped to visible results. Verify keyboard/focus behavior and mixed-authorization states.
+- [ ] Connect Planet/Explorer selection and Station/directory candidates to review and authorization controls. Deduplicate shared sources and review new group members before authorizing them.
+- [ ] Add pin/unpin, removal and clear flows with understandable grouping and reversible edits. Keep Selected, Authorized, Pinned and Used distinct.
+- [ ] Add editable budget and approximate source-cost feedback; show unknown/over-budget states without blocking edits or implying an executable model package.
+- [ ] Verify keyboard/focus behavior, restart persistence, vault isolation, changed/missing sources and failed-write recovery through the actual interface.
+- [ ] Review comfort with the user: build and refine two reusable windows without a configured model, unnecessary repeated setup or interface lockups.
+
+M9-A must not submit model requests, alter current chat authorization or claim sources were Used. Existing supported formats can be organized as objects without claiming they are model-readable. Supporting reading/search improvements should be prioritized where they directly remove friction in this workflow.
+
+### M9-B - Model consumption and provenance: deferred until controls are accepted
+
+Scope update: the user requested Station-approved context consumption now. A bounded multi-source path is implemented through existing Active Context (1-32 Markdown/CSV/PDF-text sources), with full-set identity, controlled reads, provenance and resumption. See [the handoff](./station-model-context-handoff.md). The unchecked items below still apply to named Context Windows and pin/budget policies; this does not complete M9-B as originally specified.
+
+User verification: two Markdown sources worked after manual context sizing. Exact successful saved settings and maximum usable capacity remain unverified.
+
+- [ ] Unify sidebar/runtime token estimation and expose a pre-send budget breakdown with required versus available space.
+- [ ] Record a controlled capacity benchmark per provider/model, including saved context/output settings, source count, estimated prompt size, latency and outcome. Do not treat configured limits as measured capacity.
+
+- [ ] Define conversation/window binding and compatibility with existing Active Context and saved chats.
+- [ ] Build multi-source packages with runtime authorization, source hashes, window versions and model/history/output budgets.
+- [ ] Enforce pin and budget policies at execution; record actual Used sources separately from authorized candidates.
+- [ ] Verify source/window edits, continuation, provider switching and isolation through the complete research conversation.
+
+### Later milestones
+
+- **M9.5 - Semantic retrieval:** add retrieval/ranking within the inspectable authorized boundary after M9 acceptance.
+- **M10 - CSV / analytics tools:** add analysis capabilities after context construction and retrieval foundations.
+- **M11 - Tool-using agent:** add controlled tool use after the preceding milestones. This does not automatically authorize autonomous actions or model-written vault changes.
+
+Provider expansion is not the next primary milestone. Keep the existing Ollama/Gemini/NVIDIA integration as the execution foundation and fix provider defects that block acceptance.
+
+---
+
+# Original V0.0.1-Amadeus MVP task inventory
 
 ## Purpose
 

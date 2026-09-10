@@ -23,7 +23,7 @@ async function invokeModel(channel, input) {
 // Future desktop capabilities must be exposed here deliberately, not by giving
 // renderer components unrestricted Node.js or filesystem access.
 contextBridge.exposeInMainWorld("wonnyyDesktop", {
-  apiVersion: 11,
+  apiVersion: 12,
   platform: process.platform,
   vault: {
     getSnapshot: () => ipcRenderer.invoke("vault:getSnapshot"),

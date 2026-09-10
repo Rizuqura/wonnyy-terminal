@@ -257,16 +257,13 @@ test("orchestrator rejects invalid scope shapes before the provider is called", 
     ["Station", scope({ mode: "station", sources: [manifestSource] })],
     ["zero source", scope({ sources: [] })],
     [
-      "multiple sources",
+      "duplicate sources",
       scope({
-        sources: [
-          manifestSource,
-          { ...manifestSource, id: "two.md", relativePath: "two.md" },
-        ],
+        sources: [manifestSource, { ...manifestSource }],
       }),
     ],
-    ["CSV", scope({ sources: [{ ...manifestSource, type: "csv" }] })],
-    ["PDF", scope({ sources: [{ ...manifestSource, type: "pdf" }] })],
+    ["unsupported", scope({ sources: [{ ...manifestSource, type: "docx" }] })],
+
     [
       "missing",
       scope({

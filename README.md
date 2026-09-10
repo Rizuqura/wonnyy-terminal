@@ -1,6 +1,6 @@
-# Wonnyy - Amadeus 0.0.4
+# Wonnyy - Amadeus 0.0.5
 
-Wonnyy is a local-first Electron research workspace. Explorer, Planet View, and the document reader share a user-owned vault. Chat uses one explicitly approved Markdown source through a controlled Electron boundary.
+Wonnyy is a local-first Electron research workspace. Explorer, Planet View, and the document reader share a user-owned vault. Chat uses up to 32 explicitly approved Markdown, CSV or extracted-PDF-text sources through a controlled Electron boundary. Station matches can be reviewed and added to Active Context. Context sizing is manual; maximum usable model capacity remains unmeasured.
 
 The model-integration design is governed by [the current architecture](big-context/task-model-integration-architecture.md). Read [the engineering handoff](big-context/model-integration-handoff.md) for implementation ownership, storage, failure handling, and verification.
 
@@ -37,7 +37,7 @@ The initial vault is `C:\bank`, configurable with `WONNYY_VAULT_PATH`; Change Va
 
 ## Chat workflow
 
-1. Select a Markdown file and explicitly add it to Active Context.
+1. Select files or activate Station filters, then review and explicitly add the resulting files to Active Context.
 2. Ask natural questions in the floating Planet chat or Workspace chat.
 3. Use New Chat to start another discussion of the same approved source.
 4. Changing the approved source or approving a changed version creates a clean conversation boundary.

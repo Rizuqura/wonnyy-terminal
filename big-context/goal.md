@@ -1,3 +1,29 @@
+# Current product goal - Context engineering experience
+
+Updated 2026-09-10 from [Context Windows & Human-Controlled Context Engineering](./context-engineering-experience.md).
+
+**Wonnyy should make building, inspecting, refining and reusing AI context comfortable and easy inside the user's knowledge workspace.** Planet View and Knowledge Stations help the user discover and group knowledge; a persistent Context Window defines the working knowledge boundary for a conversation or research task. Replaceable models reason over the context Wonnyy packages within that boundary.
+
+The target loop is: discover knowledge → select objects → group into a Context Window → authorize knowledge → pin important sources → control the token budget → ask a model → inspect what was used → refine context → continue the conversation.
+
+**User controls the knowledge boundary. Wonnyy controls the packaging.** Selected, Authorized, Pinned and Used are distinct states. A Context Window is its own persistent, named, versioned object; it is not UI selection, a Station filter, chat history or a selected-files array. Its knowledge budget must be distinguished from the model's total token capacity and output allowance.
+
+Immediate scope update: **M9-A delivers comfortable context controls before model consumption.** Users must be able to create, inspect, authorize, pin, budget and reuse windows without a configured model. M8 acceptance stays open but does not block this independent phase. **M9-B** later connects windows to chat and actual Used provenance. The full model-connected success criteria below apply to M9 as a whole, not to the first controls release.
+
+Roadmap:
+
+1. **M8 - Chat reliability:** accept the existing single-source conversation and recovery workflow.
+2. **M9 - Context Windows + Station grouping:** implement explicit context construction, inspection, modification and reuse, including pinning, budgeting and per-run provenance.
+3. **M9.5 - Semantic retrieval:** improve retrieval within the authorized boundary after manual context engineering is established.
+4. **M10 - CSV / analytics tools.**
+5. **M11 - Tool-using agent.**
+
+M9 success means a user can create a named Context Window from Planet/Station discoveries, understand and revise its permissions and pins, see budget constraints before execution, inspect the sources actually used afterward, and reopen/refine the window without rebuilding it from scratch. Changes must preserve understandable conversation and source-version boundaries. These are acceptance targets, not delivered features.
+
+Current implementation remains 0.0.4 with one approved Markdown source per chat. Context Windows are planned. The [current execution order in task.md](./task.md#current-execution-order) and [state.md](./state.md) distinguish planned work from verified capabilities. The original MVP below remains the broader requirements inventory; this update governs current priorities.
+
+---
+
 Wonnyy V0.0.1 — Amadeus
 
 MVP Goal State & Git Progress Target

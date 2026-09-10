@@ -154,7 +154,9 @@ class ChatService {
       const conversation = await store.read(id);
       await this.knowledge.approveChatSource(
         root,
-        conversation.contextIdentity.sources[0],
+        conversation.contextIdentity.sources.length === 1
+          ? conversation.contextIdentity.sources[0]
+          : conversation.contextIdentity.sources,
       );
       return conversation;
     });

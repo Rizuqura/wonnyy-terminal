@@ -101,7 +101,7 @@ test("prompt builder rejects empty or oversized questions and unsupported or ove
     () =>
       buildContextMessages({
         userMessage: "Question",
-        source: { ...source, type: "csv" },
+        source: { ...source, type: "docx" },
       }),
     (error) => error.code === "MODEL_INVALID_REQUEST",
   );
@@ -126,5 +126,34 @@ test("prompt builder rejects empty or oversized questions and unsupported or ove
         },
       }),
     (error) => error.code === "MODEL_CONTEXT_TOO_LARGE",
+  );
+});
+
+test("multiple sources retain separate envelopes and share one total size limit", () => {
+  const second = {
+    ...source,
+    sourceId: "other.csv",
+    relativePath: "other.csv",
+    type: "csv",
+    content: "asset,weight\nbonds,40",
+  };
+  const prompt = buildContextMessages({
+    userMessage: "Compare both files",
+    sources: [source, second],
+  });
+  assert.deepEqual(
+    prompt.messages.slice(1, 3).map((m) => JSON.parse(m.content).sourceId),
+    [source.sourceId, second.sourceId],
+  );
+  assert.throws(
+    () =>
+      buildContextMessages({
+        userMessage: "Compare",
+        sources: [source, second].map((s) => ({
+          ...s,
+          content: "a".repeat(40001),
+        })),
+      }),
+    { code: "MODEL_CONTEXT_TOO_LARGE" },
   );
 });

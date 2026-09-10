@@ -259,11 +259,16 @@ export function ChatPanel({
         </p>
         <strong>
           Active Context:{" "}
-          {chat.context?.sources[0].relativePath ?? "None ready"}
+          {chat.context?.sources
+            .map((source) => source.relativePath)
+            .join(", ") ?? "None ready"}
         </strong>
         {!chat.attached && chat.conversation && (
           <div className="chat-detached">
-            Viewing: {chat.conversation.contextIdentity.sources[0].relativePath}
+            Viewing:{" "}
+            {chat.conversation.contextIdentity.sources
+              .map((source) => source.relativePath)
+              .join(", ")}
             <button
               disabled={chat.busy}
               onClick={() => {

@@ -20,6 +20,7 @@ type Props = {
   onToggleFilter: (stationId: string) => void;
   onMatchMode: (mode: StationMatchMode) => void;
   onAddContext: () => void;
+  onAddStationContext: () => void;
   onRemoveContext: (path: string) => void;
   onClearContext: () => void;
   onBuildPackage: () => Promise<ContextPackage>;
@@ -53,6 +54,8 @@ export function StationPanel(props: Readonly<Props>) {
     <div className="station-create"><input value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} placeholder="New Station" disabled={!props.state?.writable || props.busy} /><button onClick={submit} disabled={!props.state?.writable || props.busy}>+</button></div>
     <input className="station-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Stations" />
     <div className="station-modes"><button className={props.matchMode === "any" ? "on" : ""} onClick={() => props.onMatchMode("any")}>ANY</button><button className={props.matchMode === "all" ? "on" : ""} onClick={() => props.onMatchMode("all")}>ALL</button></div>
+    <button className="pd-action" disabled={!props.activeStationIds.size || props.busy} onClick={props.onAddStationContext}>REVIEW STATION CONTEXT</button>
+    <p className="context-summary">Review the active ANY/ALL Station matches, then approve their files for chat. New Station members need another review.</p>
     <div className="station-list">{stations.map((station) => {
       const assignedCount = selectedAssignments.filter((assignment) => assignment?.stationIds.includes(station.id)).length; const allAssigned = props.selectedPaths.length > 0 && assignedCount === props.selectedPaths.length; const mixed = assignedCount > 0 && !allAssigned;
       return <div className="station-row" key={station.id}>

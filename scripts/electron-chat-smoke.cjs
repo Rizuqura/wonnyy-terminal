@@ -111,7 +111,7 @@ async function main() {
       void dialog.dismiss();
     });
     await page.getByRole("textbox", { name: "Chat question" }).waitFor();
-    await page.waitForFunction(() => window.wonnyyDesktop?.apiVersion === 11);
+    await page.waitForFunction(() => window.wonnyyDesktop?.apiVersion === 12);
   }
   async function approve(file) {
     const clear = page.getByRole("button", {

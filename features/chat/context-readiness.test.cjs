@@ -30,7 +30,7 @@ const scope = {
   sources: [source],
 };
 
-test("chat enables only one available Active Context Markdown source", () => {
+test("chat enables approved sources and rejects unavailable contexts", () => {
   const input = {
     vaultStatus: "ready",
     brainScope: scope,
@@ -43,21 +43,21 @@ test("chat enables only one available Active Context Markdown source", () => {
       ...input,
       brainScope: { ...scope, mode: "universe" },
     }) ?? "",
-    /Approve exactly one Markdown/,
+    /Review and approve/,
   );
   assert.match(
     getChatUnavailableReason({
       ...input,
       brainScope: { ...scope, sources: [] },
     }) ?? "",
-    /exactly one file/,
+    /1 to 32/,
   );
   assert.match(
     getChatUnavailableReason({
       ...input,
-      brainScope: { ...scope, sources: [{ ...source, type: "csv" }] },
+      brainScope: { ...scope, sources: [{ ...source, type: "docx" }] },
     }) ?? "",
-    /Markdown source only/,
+    /Markdown, CSV/,
   );
   assert.match(
     getChatUnavailableReason({

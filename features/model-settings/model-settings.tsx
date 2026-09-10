@@ -228,7 +228,9 @@ export function ModelSettings({
         <div>
           <dt>ACTIVE CONTEXT</dt>
           <dd>
-            {chat.context?.sources[0].relativePath ?? "No approved source"}
+            {chat.context?.sources
+              .map((source) => source.relativePath)
+              .join(", ") ?? "No approved source"}
           </dd>
         </div>
       </dl>

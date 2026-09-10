@@ -65,15 +65,37 @@ async function main() {
   };
   try {
     await fs.writeFile(path.join(root, "a.md"), "ALPHA allocation is 25%.");
+    await fs.writeFile(
+      path.join(root, "details.csv"),
+      "asset,weight\nbonds,40",
+    );
     await launch();
     await page.locator('.file-row[title="a.md"]').click();
     await page
-      .getByRole("button", { name: "REVIEW + ADD SELECTED", exact: true })
+      .locator('.file-row[title="details.csv"]')
+      .click({ modifiers: ["Control"] });
+    await page
+      .getByPlaceholder("New Station", { exact: true })
+      .fill("Research");
+    await page.getByPlaceholder("New Station", { exact: true }).press("Enter");
+    const station = page
+      .locator(".station-row")
+      .filter({ hasText: "Research" });
+    await station.locator(".station-assign").click();
+    await station.locator(".station-filter").click();
+    await page
+      .getByRole("button", { name: "REVIEW STATION CONTEXT", exact: true })
       .click();
     await page
       .getByRole("dialog", { name: "Add to Active Context", exact: true })
       .getByRole("button", { name: "Add to Active Context", exact: true })
       .click();
+    await page.waitForFunction(
+      () => document.querySelectorAll(".context-list > div").length === 2,
+    );
+    checks.push(
+      "Station multi-selection review approves Markdown and CSV together for chat",
+    );
     await send("Summarize this");
     const originalId = await page
       .getByRole("combobox", { name: "Conversation history" })

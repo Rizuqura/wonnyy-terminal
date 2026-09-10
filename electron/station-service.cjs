@@ -137,19 +137,26 @@ function clearContext(rootPath) { return mutate(rootPath, (document) => { docume
 // Explicit chat actions replace approval atomically; viewing history never calls these.
 function approveChatSource(rootPath, source) {
   return mutate(rootPath, async (document) => {
-    if (!source || typeof source.relativePath !== "string" || !/\.(?:md|markdown)$/i.test(source.relativePath)) throw new Error("A Markdown source is required.");
-    await readVaultFile(rootPath, source.relativePath);
-    const current = await fingerprint(rootPath, source.relativePath, "file");
-    if (current.sha256 !== source.contentHash) throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "This source version is no longer available. The old chat remains viewable.");
-    document.activeContext = [{ relativePath: source.relativePath, addedAt: new Date().toISOString(), fingerprint: current }];
+    const sources = Array.isArray(source) ? source : [source];
+    if (!sources.length || sources.length > 32) throw new Error("Approve 1 to 32 sources.");
+    await scanVault(rootPath);
+    const approved = [];
+    for (const item of sources) {
+      if (!item || typeof item.relativePath !== "string" || !/\.(?:md|markdown|csv|pdf)$/i.test(item.relativePath)) throw new Error("Unsupported source.");
+      const text = /\.pdf$/i.test(item.relativePath) ? getIndexedPdfText(rootPath, item.relativePath) ?? "" : (await readVaultFile(rootPath, item.relativePath)).content;
+      if (!text.trim() || crypto.createHash("sha256").update(text).digest("hex") !== item.contentHash) throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "A source version is unavailable. The old chat remains viewable.");
+      approved.push({relativePath: item.relativePath, addedAt: new Date().toISOString(), fingerprint: await fingerprint(rootPath, item.relativePath, "file")});
+    }
+    document.activeContext = approved;
   });
 }
-
 function refreshChatSource(rootPath) {
   return mutate(rootPath, async (document) => {
-    if (document.activeContext.length !== 1 || !/\.(?:md|markdown)$/i.test(document.activeContext[0].relativePath)) throw new Error("Approve exactly one Markdown source first.");
-    await readVaultFile(rootPath, document.activeContext[0].relativePath);
-    document.activeContext[0].fingerprint = await fingerprint(rootPath, document.activeContext[0].relativePath, "file");
+    if (!document.activeContext.length || document.activeContext.length > 32) throw new Error("Approve 1 to 32 sources first.");
+    for (const item of document.activeContext) {
+      if (!/\.(?:md|markdown|csv|pdf)$/i.test(item.relativePath)) throw new Error("Unsupported source.");
+      item.fingerprint = await fingerprint(rootPath, item.relativePath, "file");
+    }
   });
 }
 
@@ -178,7 +185,7 @@ async function readableSource(rootPath, entry, assignmentMap, stationMap, record
     estimatedTokens: Math.ceil(content.length / 4),
     contentHash,
     missing: false,
-    changed: Boolean(recorded?.fingerprint?.sha256 && recorded.fingerprint.sha256 !== contentHash),
+    changed: Boolean(recorded?.fingerprint?.sha256 && recorded.fingerprint.sha256 !== (extension === ".pdf" ? (await fingerprint(rootPath, entry.relativePath, "file")).sha256 : contentHash)),
   };
 }
 

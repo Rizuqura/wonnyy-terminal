@@ -9,7 +9,7 @@ const {
   credentialProvider,
 } = require("./schemas.cjs");
 const { checkRemoteModel } = require("./model-check.cjs");
-const API_VERSION = 11;
+const API_VERSION = 12;
 
 function registerAiIpc({
   ipcMain,

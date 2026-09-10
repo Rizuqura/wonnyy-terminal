@@ -1,28 +1,41 @@
 const { createHash } = require("node:crypto");
 const { ModelRuntimeError } = require("./model-errors.cjs");
-
+const SOURCE_TYPES = ["md", "markdown", "csv", "pdf"];
 function contextIdentity(scope) {
-  const source = scope?.sources?.[0];
+  const input = scope?.sources;
   if (
     scope?.mode !== "active-context" ||
-    scope.sources.length !== 1 ||
-    !["md", "markdown"].includes(source?.type) ||
-    source.missing ||
-    source.changed ||
-    !/^[a-f0-9]{64}$/.test(source.contentHash ?? "")
-  ) {
+    !Array.isArray(input) ||
+    !input.length ||
+    input.length > 32 ||
+    input.some(
+      (source) =>
+        !source ||
+        !SOURCE_TYPES.includes(source.type) ||
+        source.missing ||
+        source.changed ||
+        typeof source.id !== "string" ||
+        !source.id ||
+        typeof source.relativePath !== "string" ||
+        !source.relativePath ||
+        !/^[a-f0-9]{64}$/.test(source.contentHash ?? ""),
+    ) ||
+    new Set(input.map((source) => source.id)).size !== input.length ||
+    new Set(input.map((source) => source.relativePath)).size !== input.length
+  )
     throw new ModelRuntimeError(
       "MODEL_CONTEXT_INVALID",
-      "Approve one available, unchanged Markdown file in Active Context.",
+      "Approve 1 to 32 available, unchanged Markdown, CSV or text-PDF sources in Active Context.",
     );
-  }
-  const sources = [
-    {
+  const sources = input
+    .map((source) => ({
       sourceId: source.id,
       relativePath: source.relativePath,
       contentHash: source.contentHash,
-    },
-  ];
+    }))
+    .sort((a, b) =>
+      a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0,
+    );
   return {
     id: createHash("sha256")
       .update(JSON.stringify({ mode: scope.mode, sources }))
@@ -31,30 +44,23 @@ function contextIdentity(scope) {
     sources,
   };
 }
-
 function validateContextIdentity(value) {
-  const source = value?.sources?.[0];
   const expected = contextIdentity({
     mode: value?.mode,
-    sources: (value?.sources ?? []).map((item) => ({
-      id: item.sourceId,
-      relativePath: item.relativePath,
-      contentHash: item.contentHash,
-      type: "md",
-    })),
+    sources: Array.isArray(value?.sources)
+      ? value.sources.map((item) => ({
+          id: item?.sourceId,
+          relativePath: item?.relativePath,
+          contentHash: item?.contentHash,
+          type: item?.relativePath?.split(".").pop()?.toLowerCase(),
+        }))
+      : [],
   });
-  if (
-    !source ||
-    typeof source.sourceId !== "string" ||
-    typeof source.relativePath !== "string" ||
-    expected.id !== value.id
-  ) {
+  if (expected.id !== value.id)
     throw new ModelRuntimeError(
       "MODEL_STORAGE_INVALID",
       "Stored source identity does not match its source references.",
     );
-  }
   return expected;
 }
-
 module.exports = { contextIdentity, validateContextIdentity };

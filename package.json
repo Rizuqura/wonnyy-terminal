@@ -1,6 +1,6 @@
 {
   "name": "wonnyy-amadeus",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Local-first AI-native knowledge and research workspace",
   "private": true,
   "main": "electron/main.cjs",

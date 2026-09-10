@@ -13,6 +13,18 @@ export interface ScreenPoint {
   y: number;
 }
 
+// Select visible node centers in screen coordinates, independent of drag direction.
+export function boxSelectPlanetNodes(nodes: readonly KnowledgeNode[], positions: ReadonlyMap<string, NodeLayout>, camera: PlanetCameraTransform, start: ScreenPoint, end: ScreenPoint, band: PlanetSemanticBand): string[] {
+  return nodes.filter((node) => {
+    if (band === "far" && node.type === "file") return false;
+    const position = positions.get(node.id);
+    if (!position) return false;
+    const x = camera.x + position.x * camera.k;
+    const y = camera.y + position.y * camera.k;
+    return x >= Math.min(start.x, end.x) && x <= Math.max(start.x, end.x) && y >= Math.min(start.y, end.y) && y <= Math.max(start.y, end.y);
+  }).map((node) => node.id);
+}
+
 interface HitCandidate {
   node: KnowledgeNode;
   distance: number;

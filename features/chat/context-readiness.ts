@@ -16,14 +16,21 @@ export function getChatUnavailableReason({
   if (brainScopeBusy) return "Preparing the current Brain Scope…";
   if (brainScopeError) return brainScopeError;
   if (!brainScope || brainScope.mode !== "active-context")
-    return "Approve exactly one Markdown file in Active Context before chatting.";
-  if (brainScope.sources.length !== 1)
-    return "Chat requires exactly one file in Active Context.";
-  const source = brainScope.sources[0];
-  if (!["md", "markdown"].includes(source.type))
-    return "Chat supports one Markdown source only.";
-  if (source.missing || source.changed || !source.contentHash)
-    return "The approved Markdown source is missing or changed. Refresh Active Context first.";
+    return "Review and approve Station sources or selected files in Active Context before chatting.";
+  if (!brainScope.sources.length || brainScope.sources.length > 32)
+    return "Chat requires 1 to 32 approved sources.";
+  if (
+    brainScope.sources.some(
+      (source) => !["md", "markdown", "csv", "pdf"].includes(source.type),
+    )
+  )
+    return "Chat supports Markdown, CSV and extracted PDF text.";
+  if (
+    brainScope.sources.some(
+      (source) => source.missing || source.changed || !source.contentHash,
+    )
+  )
+    return "An approved source is missing or changed. Refresh Active Context first.";
   return null;
 }
 

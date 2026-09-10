@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent, PointerEvent } from "react";
 import type { KnowledgeNode, PlanetGraph, StationCluster } from "../types/graph";
-import { pickPlanetNode } from "../lib/planet-hit-testing";
+import { boxSelectPlanetNodes, pickPlanetNode } from "../lib/planet-hit-testing";
 import { ancestorPath, computeLayout, computeStationLayout, subtreeIds } from "../lib/planet-layout";
 import { PlanetNode } from "./planet-node";
 import { PlanetMinimap } from "./planet-minimap";
@@ -12,6 +12,7 @@ export interface PlanetSceneProps {
   graph: PlanetGraph;
   selectedIds: ReadonlySet<string>;
   onSelect: (id: string | null, additive?: boolean) => void;
+  onSelectMany: (ids: string[], additive: boolean) => void;
   onOpenFile: (id: string) => void;
   focusId: string | null;
   onFocus: (id: string | null) => void;
@@ -32,14 +33,16 @@ function isSceneOverlay(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(".pmini, .pctrl, .chat-panel"));
 }
 
-export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId, onFocus, stationMatchIds = new Set(), activeContextIds = new Set(), projectionIds = null, stationClusters = [], chatProps }: Readonly<PlanetSceneProps>) {
+export function PlanetScene({ graph, selectedIds, onSelect, onSelectMany, onOpenFile, focusId, onFocus, stationMatchIds = new Set(), activeContextIds = new Set(), projectionIds = null, stationClusters = [], chatProps }: Readonly<PlanetSceneProps>) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [canvas, setCanvas] = useState({ w: 0, h: 0 });
   const [transform, setTransform] = useState({ x: 0, y: 0, k: 1 });
   const [dragging, setDragging] = useState(false);
   const [asteroidsVisible, setAsteroidsVisible] = useState(true);
-  const dragStart = useRef<{ px: number; py: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [panMode, setPanMode] = useState(false);
+  const dragStart = useRef<{ px: number; py: number; ox: number; oy: number; moved: boolean; box: boolean; additive: boolean; pointerId: number } | null>(null);
 
   const layout = useMemo(
     () => graph.projection === "station" ? computeStationLayout(graph, stationMatchIds, stationClusters) : computeLayout(graph, "orbital"),
@@ -173,6 +176,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
     const onWheel = (event: WheelEvent) => {
       if (isSceneOverlay(event.target)) return;
       event.preventDefault();
+      if (dragStart.current) return;
       const rect = el.getBoundingClientRect();
       const mx = event.clientX - rect.left;
       const my = event.clientY - rect.top;
@@ -187,9 +191,11 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
   }, []);
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (isSceneOverlay(event.target)) return;
+    if (isSceneOverlay(event.target) || dragStart.current || ![0, 1].includes(event.button)) return;
+    event.preventDefault();
+    event.currentTarget.focus();
     setDragging(true);
-    dragStart.current = { px: event.clientX, py: event.clientY, ox: transform.x, oy: transform.y, moved: false };
+    dragStart.current = { px: event.clientX, py: event.clientY, ox: transform.x, oy: transform.y, moved: false, box: event.button === 0 && !event.altKey && !panMode, additive: event.ctrlKey || event.metaKey || event.shiftKey, pointerId: event.pointerId };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
@@ -199,6 +205,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
       return;
     }
     const start = dragStart.current;
+    if (start && start.pointerId !== event.pointerId) return;
     if (!start) {
       setHoveredId(pickAt(event.clientX, event.clientY)?.id ?? null);
       return;
@@ -209,15 +216,26 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
       start.moved = true;
       setHoveredId(null);
     }
-    setTransform((t) => ({ ...t, x: start.ox + dx, y: start.oy + dy }));
+    if (start.box) {
+      if (start.moved) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        setSelectionBox({ x: Math.min(start.px, event.clientX) - rect.left, y: Math.min(start.py, event.clientY) - rect.top, w: Math.abs(dx), h: Math.abs(dy) });
+      }
+    } else setTransform((t) => ({ ...t, x: start.ox + dx, y: start.oy + dy }));
   };
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (!dragStart.current) return;
+    if (!dragStart.current || dragStart.current.pointerId !== event.pointerId) return;
+    const start = dragStart.current;
     const moved = dragStart.current?.moved ?? false;
     dragStart.current = null;
     setDragging(false);
-    if (!moved) {
+    setSelectionBox(null);
+    if (moved && start.box) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const ids = boxSelectPlanetNodes(graph.nodes.filter(isVisible), layout.positions, transform, { x: start.px - rect.left, y: start.py - rect.top }, { x: event.clientX - rect.left, y: event.clientY - rect.top }, semanticBand);
+      onSelectMany(ids.filter((id) => id !== graph.rootId), start.additive);
+    } else if (!moved && event.button === 0) {
       const picked = pickAt(event.clientX, event.clientY);
       onSelect(picked?.id ?? null, picked ? event.ctrlKey || event.metaKey : false);
       setHoveredId(picked?.id ?? null);
@@ -225,6 +243,14 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+  };
+
+  const cancelDrag = () => {
+    const pointerId = dragStart.current?.pointerId;
+    dragStart.current = null;
+    setDragging(false);
+    setSelectionBox(null);
+    if (pointerId !== undefined && canvasRef.current?.hasPointerCapture(pointerId)) canvasRef.current.releasePointerCapture(pointerId);
   };
 
   const onDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -288,14 +314,21 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
             })}
           </span>
         ) : (
-          <span className="planet-view-hint">Scroll to zoom · drag to pan · double-click a directory to dive in</span>
+          <span className="planet-view-hint">Drag to {panMode ? "pan" : "select"} · Ctrl/Shift adds · Alt-drag pans</span>
         )}
-        <span className="pv-count">{graph.nodes.length} NODES</span>
+        <button type="button" aria-pressed={panMode} onClick={() => setPanMode(!panMode)}>{panMode ? "Pan mode" : "Select mode"}</button>
+        <span className="pv-count">{selectedIds.size} SELECTED · {graph.nodes.length} NODES</span>
       </div>
 
       <div
         className={`planet-canvas pv-canvas${hoveredId ? " has-pick" : ""}`}
         ref={canvasRef}
+        tabIndex={0}
+        aria-label="Planet View selection canvas"
+        style={{ touchAction: "none", cursor: panMode ? "grab" : "crosshair" }}
+        onKeyDown={(event) => { if (event.key === "Escape" && !isSceneOverlay(event.target)) cancelDrag(); }}
+        onPointerCancel={cancelDrag}
+        onLostPointerCapture={cancelDrag}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -381,6 +414,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onOpenFile, focusId,
           ))}
         </div>
 
+        {selectionBox ? <div aria-hidden="true" style={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h, border: "1px solid #b4d8bb", background: "rgba(140, 190, 150, 0.18)" }} /> : null}
         <PlanetMinimap graph={graph} layout={layout} viewport={viewport} focusId={focusId} asteroidsVisible={asteroidsVisible} onJump={jump} />
         <ChatPanel variant="floating" {...chatProps} />
         <PlanetControls

@@ -294,36 +294,36 @@ export function AppShell() {
     void stationMutation(() => requireKnowledgeBridge().context.clear());
   }, [stationMutation]);
 
-  const addSelectedToContext = useCallback(async () => {
-    if (!selectedKnowledgePaths.length) return;
-    const version = vaultLoadVersion.current;
-    setStationBusy(true);
-    setStationError(null);
-    try {
-      const bridge = requireKnowledgeBridge();
-      const preview = await bridge.context.preview(selectedKnowledgePaths);
-      if (version !== vaultLoadVersion.current) return;
-      const sample = preview.files.slice(0, 6).join("\n");
-      const remainder =
-        preview.files.length > 6
-          ? `\n…and ${preview.files.length - 6} more`
-          : "";
-      if (
-        (await confirm(
-          `Add ${preview.files.length} file(s) to Active Context?\nEstimated ~${preview.estimatedTokens.toLocaleString()} tokens\n\n${sample}${remainder}`,
-          "Add to Active Context",
-        )) &&
-        version === vaultLoadVersion.current
-      )
-        setStationState(await bridge.context.add(selectedKnowledgePaths));
-    } catch (error) {
-      setStationError(
-        error instanceof Error ? error.message : "Context preview failed.",
-      );
-    } finally {
-      setStationBusy(false);
-    }
-  }, [selectedKnowledgePaths, confirm]);
+  const addSelectedToContext = useCallback(
+    async (paths = selectedKnowledgePaths) => {
+      if (!paths.length) return;
+      const version = vaultLoadVersion.current;
+      setStationBusy(true);
+      setStationError(null);
+      try {
+        const bridge = requireKnowledgeBridge();
+        const preview = await bridge.context.preview(paths);
+        if (version !== vaultLoadVersion.current) return;
+        const sample = preview.files.join("\n");
+        const remainder = "";
+        if (
+          (await confirm(
+            `Add ${preview.files.length} file(s) to Active Context?\nEstimated ~${preview.estimatedTokens.toLocaleString()} tokens\n\n${sample}${remainder}`,
+            "Add to Active Context",
+          )) &&
+          version === vaultLoadVersion.current
+        )
+          setStationState(await bridge.context.add(preview.files));
+      } catch (error) {
+        setStationError(
+          error instanceof Error ? error.message : "Context preview failed.",
+        );
+      } finally {
+        setStationBusy(false);
+      }
+    },
+    [selectedKnowledgePaths, confirm],
+  );
 
   const selectEntry = useCallback((id: string | null, additive = false) => {
     if (!id) {
@@ -540,6 +540,11 @@ export function AppShell() {
               graph={projection.graph}
               selectedIds={selectedSet}
               onSelect={selectEntry}
+              onSelectMany={(ids, additive) =>
+                setSelectedIds((previous) =>
+                  additive ? [...new Set([...previous, ...ids])] : ids,
+                )
+              }
               onOpenFile={openPlanetFile}
               focusId={focusId}
               onFocus={setFocusId}
@@ -632,6 +637,9 @@ export function AppShell() {
                 }
                 onMatchMode={setStationMatchMode}
                 onAddContext={() => void addSelectedToContext()}
+                onAddStationContext={() =>
+                  void addSelectedToContext([...(projection?.matches ?? [])])
+                }
                 onRemoveContext={(path) =>
                   void stationMutation(() =>
                     requireKnowledgeBridge().context.remove([path]),

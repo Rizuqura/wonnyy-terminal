@@ -31,7 +31,7 @@ function validateConversation(value) {
     !Number.isFinite(Date.parse(value.updatedAt)) ||
     !/^[a-f0-9]{64}$/.test(value.contextIdentity?.id ?? "") ||
     value.contextIdentity.mode !== "active-context" ||
-    value.contextIdentity.sources?.length !== 1 ||
+    !value.contextIdentity.sources?.length ||
     !Array.isArray(value.messages) ||
     !Array.isArray(value.attempts)
   )

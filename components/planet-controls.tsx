@@ -12,6 +12,19 @@ export interface PlanetControlsProps {
 
 export function PlanetControls({ onZoomIn, onZoomOut, zoomPercent, onFocus, onReset, asteroidsVisible, onToggleAsteroids }: Readonly<PlanetControlsProps>) {
   return <div className="pctrl" onPointerDown={(event) => event.stopPropagation()}>
+    <section className="pctrl-guide" aria-label="Planet View control guide">
+      <b>CONTROLS</b>
+      <dl>
+        <div><dt>Drag in Select mode</dt><dd>Select a group</dd></div>
+        <div><dt>Ctrl / Shift + drag</dt><dd>Add to selection</dd></div>
+        <div><dt>Ctrl / Cmd + click</dt><dd>Toggle one object</dd></div>
+        <div><dt>Alt / middle drag</dt><dd>Pan the view</dd></div>
+        <div><dt>Scroll</dt><dd>Zoom</dd></div>
+        <div><dt>Double-click</dt><dd>Open file / focus folder</dd></div>
+        <div><dt>Escape</dt><dd>Cancel selection drag</dd></div>
+      </dl>
+      <p>Use Pan mode for ordinary dragging. After selecting, use + beside a Station to assign the group.</p>
+    </section>
     <label className="pctrl-check">
       <input type="checkbox" checked={asteroidsVisible} onChange={onToggleAsteroids} />
       <span className="pctrl-box" aria-hidden="true">{asteroidsVisible ? "[x]" : "[ ]"}</span>

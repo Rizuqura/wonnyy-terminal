@@ -655,3 +655,106 @@ test("task echoes receive one bounded repair and rejected output never enters hi
     1,
   );
 });
+
+test("approved Station source sets reach prompts, preserve provenance and resume atomically", async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(
+    path.join(f.root, "numbers.csv"),
+    "asset,weight\nbonds,40",
+  );
+  const state = await stations.createStation(f.root, "Research");
+  const stationId = state.stations.find((s) => s.name === "Research").id;
+  await stations.setAssignments(
+    f.root,
+    ["a.md", "numbers.csv"],
+    stationId,
+    true,
+  );
+  await stations.clearContext(f.root);
+  const selection = { activeStationIds: [stationId], matchMode: "any" };
+  await assert.rejects(f.service.create(f.root, selection), {
+    code: "MODEL_CONTEXT_INVALID",
+  });
+  const scope = await stations.prepareBrainScope(f.root, {
+    ownerId: "test-review",
+    ...selection,
+  });
+  const preview = await stations.previewContext(
+    f.root,
+    scope.sources.map((s) => s.relativePath),
+  );
+  await stations.addContext(f.root, preview.files);
+  const chat = await f.service.create(f.root, selection);
+  const result = await f.service.run(f.root, 1, f.input(chat, selection));
+  assert.deepEqual(
+    result.run.sourcesActuallyRead.map((s) => s.relativePath),
+    ["a.md", "numbers.csv"],
+  );
+  const envelopes = f.calls[0].messages
+    .slice(1, 3)
+    .map((m) => JSON.parse(m.content));
+  assert.deepEqual(
+    envelopes.map((s) => s.relativePath),
+    ["a.md", "numbers.csv"],
+  );
+  assert.match(envelopes[1].content, /bonds,40/);
+  assert.doesNotMatch(JSON.stringify(f.calls[0].messages), /BETA/);
+  await stations.setAssignments(f.root, ["b.md"], stationId, true);
+  const unchanged = await f.service.create(f.root, selection);
+  assert.equal(
+    unchanged.contextIdentity.id,
+    chat.contextIdentity.id,
+    "new Station members do not expand existing approval",
+  );
+  await stations.clearContext(f.root);
+  await stations.addContext(f.root, ["b.md"]);
+  const restarted = new ChatService({
+    provider: f.provider,
+    registry: f.registry,
+  });
+  await restarted.resume(f.root, chat.id);
+  assert.deepEqual(
+    (await stations.getStationState(f.root)).activeContext.map(
+      (s) => s.relativePath,
+    ),
+    ["a.md", "numbers.csv"],
+  );
+  await fs.writeFile(
+    path.join(f.root, "numbers.csv"),
+    "asset,weight\nbonds,90",
+  );
+  await assert.rejects(restarted.run(f.root, 1, f.input(chat, selection)), {
+    code: "MODEL_CONTEXT_INVALID",
+  });
+  await stations.clearContext(f.root);
+  await stations.addContext(f.root, ["b.md"]);
+  await assert.rejects(restarted.resume(f.root, chat.id), {
+    code: "BRAIN_SOURCE_CHANGED",
+  });
+  assert.deepEqual(
+    (await stations.getStationState(f.root)).activeContext.map(
+      (s) => s.relativePath,
+    ),
+    ["b.md"],
+    "failed resume leaves approval intact",
+  );
+});
+
+test("PDF text context uses extracted hashes and can be resumed", async (t) => {
+  const f = await fixture(t);
+  const { cmapPdf } = require("../../scripts/fixtures/cmap-pdf.cjs");
+  await fs.writeFile(path.join(f.root, "mapped.pdf"), cmapPdf());
+  await stations.addContext(f.root, ["mapped.pdf"]);
+  const chat = await f.service.create(f.root, scopeInput);
+  const result = await f.service.run(f.root, 1, f.input(chat));
+  assert.equal(result.run.sourcesActuallyRead.length, 2);
+  const pdf = JSON.parse(f.calls[0].messages[2].content);
+  assert.equal(pdf.type, "pdf");
+  assert.ok(pdf.content.trim());
+  await stations.clearContext(f.root);
+  await f.service.resume(f.root, chat.id);
+  assert.equal(
+    (await stations.getStationState(f.root)).activeContext.length,
+    2,
+  );
+});

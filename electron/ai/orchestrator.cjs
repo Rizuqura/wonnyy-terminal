@@ -234,33 +234,37 @@ function createContextOrchestrator({
         sourcesAvailable = Array.isArray(scope?.sources)
           ? scope.sources.map(sourceReference)
           : [];
-        const manifestSource = scope.sources[0];
-        options.signal?.throwIfAborted();
+        const sources = [];
+        for (const manifestSource of scope.sources) {
+          options.signal?.throwIfAborted();
 
-        const source = await measure("sourceReadMs", () =>
-          readSource({
-            ownerId,
-            scopeId: scope.id,
-            sourceId: manifestSource.id,
-          }),
-        );
-        if (
-          source.scopeId !== scope.id ||
-          source.ownerId !== ownerId ||
-          source.manifestVersion !== scope.manifestVersion ||
-          source.sourceId !== manifestSource.id ||
-          source.relativePath !== manifestSource.relativePath ||
-          source.contentHash !== manifestSource.contentHash
-        ) {
-          throw contextError(
-            "The controlled source read did not match the prepared Brain Scope manifest.",
-            { sourceId: manifestSource.id },
+          const source = await measure("sourceReadMs", () =>
+            readSource({
+              ownerId,
+              scopeId: scope.id,
+              sourceId: manifestSource.id,
+            }),
           );
+          if (
+            source.scopeId !== scope.id ||
+            source.ownerId !== ownerId ||
+            source.manifestVersion !== scope.manifestVersion ||
+            source.sourceId !== manifestSource.id ||
+            source.relativePath !== manifestSource.relativePath ||
+            source.contentHash !== manifestSource.contentHash ||
+            source.type !== manifestSource.type
+          ) {
+            throw contextError(
+              "The controlled source read did not match the prepared Brain Scope manifest.",
+              { sourceId: manifestSource.id },
+            );
+          }
+          sources.push(source);
+          sourcesActuallyRead.push(sourceReference(source));
         }
-        sourcesActuallyRead = [sourceReference(source)];
         const base = promptBuilder({
           userMessage: request.userMessage,
-          source,
+          sources,
         });
         const budget = budgetHistory(base.messages, request.history, settings);
         Object.assign(diagnostics, budget.diagnostics);
@@ -269,7 +273,7 @@ function createContextOrchestrator({
         const prompt = promptBuilder({
           userMessage: request.userMessage,
           history: budget.history,
-          source,
+          sources,
         });
         promptVersion = prompt.promptVersion;
         if (options.prepareModel && typeof provider.prepare === "function") {
@@ -356,7 +360,7 @@ function createContextOrchestrator({
             promptBuilder({
               userMessage: request.userMessage,
               history: repairBudget.history,
-              source,
+              sources,
             }).messages,
           );
           stage("GENERATING");
