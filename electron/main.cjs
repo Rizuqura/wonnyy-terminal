@@ -82,7 +82,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: "#0a0d0e",
-    title: "Wonnyy — Amadeus",
+    title: "Wonnyy — Amadeus 0.0.6",
     icon: path.join(__dirname, "..", "build", "icon.png"),
     autoHideMenuBar: true,
     webPreferences: {

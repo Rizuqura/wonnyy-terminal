@@ -18,7 +18,7 @@ export function TopBar({
       <div className="brand">
         <span className="brand-mark">W</span>
         <span>WONNYY</span>
-        <span className="version">Amadeus 0.0.5</span>
+        <span className="version">Amadeus 0.0.6</span>
       </div>
       <nav className="top-nav" aria-label="Primary">
         <button
