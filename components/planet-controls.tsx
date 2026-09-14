@@ -16,9 +16,9 @@ export function PlanetControls({ onZoomIn, onZoomOut, zoomPercent, onFocus, onRe
       <b>CONTROLS</b>
       <dl>
         <div><dt>Drag in Select mode</dt><dd>Select a group</dd></div>
-        <div><dt>Ctrl / Shift + drag</dt><dd>Add to selection</dd></div>
-        <div><dt>Ctrl / Cmd + click</dt><dd>Toggle one object</dd></div>
-        <div><dt>Alt / middle drag</dt><dd>Pan the view</dd></div>
+        <div><dt>Shift + drag</dt><dd>Add to selection</dd></div>
+        <div><dt>Shift + click</dt><dd>Toggle one object</dd></div>
+        <div><dt>Space + drag</dt><dd>Pan the view</dd></div>
         <div><dt>Scroll</dt><dd>Zoom</dd></div>
         <div><dt>Double-click</dt><dd>Open file / focus folder</dd></div>
         <div><dt>Escape</dt><dd>Cancel selection drag</dd></div>

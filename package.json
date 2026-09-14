@@ -18,6 +18,8 @@
     "test": "node --experimental-strip-types --test electron/*.test.cjs electron/ai/*.test.cjs electron/ai/providers/*.test.cjs lib/*.test.cjs features/chat/*.test.cjs",
     "typecheck": "tsc --noEmit",
     "test:chat:live": "node scripts/chat-live-acceptance.cjs",
+    "test:dataset:live": "node scripts/dataset-live-acceptance.cjs",
+    "test:dataset:electron": "npm run build && node scripts/dataset-electron-acceptance.cjs",
     "test:chat:online": "node scripts/chat-live-acceptance.cjs --gemini",
     "test:chat:online:electron": "npm run build && node scripts/electron-online-chat-smoke.cjs",
     "test:chat:electron": "npm run build && node scripts/electron-chat-smoke.cjs",

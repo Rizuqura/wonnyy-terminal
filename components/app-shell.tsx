@@ -503,7 +503,6 @@ export function AppShell() {
           setSettingsOpen(null);
           setView(next);
         }}
-        onChangeVault={() => void changeVault()}
       />
       {settingsOpen === "ai" ? (
         <ModelSettings

@@ -391,7 +391,7 @@ export function computeLayout(graph: PlanetGraph, mode: LayoutMode): LayoutResul
   const positions = new Map<string, NodeLayout>();
   const sizeCache = new Map<string, number>();
   for (const node of graph.nodes) {
-    sizeCache.set(node.id, sizeOf(node, node.children.length));
+    sizeCache.set(node.id, sizeOf(node, node.children.length) * (node.id === graph.rootId ? 3 : 1));
   }
   if (mode === "orbital") return computeOrganicLayout(graph, sizeCache);
   const childIds = (id: string) => graph.byId.get(id)?.children.filter((childId) => graph.byId.get(childId)?.fileType !== "other") ?? [];

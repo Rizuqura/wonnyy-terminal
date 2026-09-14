@@ -30,6 +30,8 @@
   margin-top: 24px;
 }
 .confirmation-actions button {
+  min-height: 38px;
+  min-width: 72px;
   padding: 8px 14px;
   border: 1px solid #65766b;
   background: #18221c;

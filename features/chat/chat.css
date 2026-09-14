@@ -82,6 +82,10 @@
     opacity: 0.48;
   }
 }
+.chat-source-evidence,
+.chat-sources {
+  opacity: 0.3;
+}
 .chat-sources {
   margin-top: 7px;
   padding-top: 6px;

@@ -332,7 +332,23 @@ export function ChatPanel({
             <span className="chat-message-role">
               {message.role === "user" ? "YOU" : "WONNYY"}
             </span>
-            <p>{message.content}</p>
+            <p>
+              {message.role === "assistant"
+                ? message.content
+                    .split(
+                      /(\n\n(?:Recomputed earlier analysis\. )?Source: "[^\n]+"; \d+\/\d+ rows matched;[\s\S]*$)/,
+                    )
+                    .map((part, index) =>
+                      index === 1 ? (
+                        <span className="chat-source-evidence" key={index}>
+                          {part}
+                        </span>
+                      ) : (
+                        part
+                      ),
+                    )
+                : message.content}
+            </p>
             {attempt &&
               ["failed", "cancelled", "interrupted"].includes(
                 attempt.status,

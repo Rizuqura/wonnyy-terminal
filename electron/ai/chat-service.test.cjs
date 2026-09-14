@@ -230,6 +230,16 @@ async function fixture(t) {
     }),
     complete: async (request) => {
       calls.push(request);
+      if (request.format?.properties?.queries)
+        return {
+          model: request.model,
+          provider: "ollama",
+          finishReason: "stop",
+          content: JSON.stringify({
+            queries: [{ sourceId: "numbers.csv", operation: "profile" }],
+          }),
+          usage: null,
+        };
       request.onContent?.('{"answer":"Source answer."}');
       return {
         model: request.model,
@@ -697,7 +707,11 @@ test("approved Station source sets reach prompts, preserve provenance and resume
     envelopes.map((s) => s.relativePath),
     ["a.md", "numbers.csv"],
   );
-  assert.match(envelopes[1].content, /bonds,40/);
+  assert.deepEqual(JSON.parse(envelopes[1].content).sample[0].values, [
+    "bonds",
+    "40",
+  ]);
+  assert.equal(result.run.diagnostics.datasetAnalysis.results[0].rowCount, 1);
   assert.doesNotMatch(JSON.stringify(f.calls[0].messages), /BETA/);
   await stations.setAssignments(f.root, ["b.md"], stationId, true);
   const unchanged = await f.service.create(f.root, selection);
@@ -713,6 +727,25 @@ test("approved Station source sets reach prompts, preserve provenance and resume
     registry: f.registry,
   });
   await restarted.resume(f.root, chat.id);
+  const followup = await restarted.run(f.root, 1, f.input(chat, selection));
+  assert.equal(
+    followup.run.diagnostics.datasetHistory[0].runId,
+    result.run.runId,
+  );
+  assert.equal(
+    followup.run.diagnostics.datasetHistory[0].results[0].rowCount,
+    1,
+  );
+  assert.ok(
+    f.calls
+      .filter((call) => call.format?.properties?.queries)
+      .at(-1)
+      .messages.some(
+        (message) =>
+          message.role === "user" &&
+          message.content.includes("previousResults"),
+      ),
+  );
   assert.deepEqual(
     (await stations.getStationState(f.root)).activeContext.map(
       (s) => s.relativePath,

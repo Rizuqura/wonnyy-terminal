@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const { setTimeout: delay } = require("node:timers/promises");
 const {
   ModelRuntimeError,
   serializeModelError,
@@ -131,15 +132,35 @@ class NvidiaProvider {
       touch();
       const key = await this.credentials.get("nvidia");
       controller.signal.throwIfAborted();
-      response = await this.fetch(BASE + resource, {
-        ...init,
-        redirect: "error",
-        signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + key,
-        },
-      });
+      for (let attempt = 0; ; attempt++) {
+        controller.signal.throwIfAborted();
+        touch();
+        response = await this.fetch(BASE + resource, {
+          ...init,
+          redirect: "error",
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + key,
+          },
+        });
+        // Retry rejected HTTP requests only, before consuming any answer.
+        // All attempts share the original absolute deadline and cancellation.
+        if (![500, 502, 503, 504].includes(response.status) || attempt >= 2)
+          break;
+        const retryAfter = remoteError(
+          response.status,
+          response.headers.get("retry-after"),
+        ).details.retryAfterSeconds;
+        if (retryAfter !== null && retryAfter > 10) break;
+        await response.body?.cancel().catch(() => {});
+        clearTimeout(idle);
+        await delay(
+          Math.max(1000 * 2 ** attempt, (retryAfter ?? 0) * 1000),
+          undefined,
+          { signal: controller.signal },
+        );
+      }
       if (!response.ok)
         throw remoteError(response.status, response.headers.get("retry-after"));
       return await consume(response, touch);
@@ -315,8 +336,10 @@ class NvidiaProvider {
       );
     // Hosted chat models need not generate Wonnyy's internal transport envelope.
     // Normalize their final content here; keep the shared answer validator intact.
-    messages[0].content +=
-      "\nWrite the completed answer directly as text or Markdown. Do not wrap it in an answer JSON object. Do not include reasoning or planning. Wonnyy handles response serialization.";
+    const datasetPlan = Boolean(request.format?.properties?.queries);
+    messages[0].content += datasetPlan
+      ? `\nReturn only a JSON object matching this schema, without Markdown fences: ${JSON.stringify(request.format)}`
+      : "\nWrite the completed answer directly as text or Markdown. Do not wrap it in an answer JSON object. Do not include reasoning or planning. Wonnyy handles response serialization.";
     return this.request(
       "chat/completions",
       {
@@ -412,7 +435,9 @@ class NvidiaProvider {
               { reason: "truncated" },
             );
           if (finish !== "stop" || !content.trim()) throw invalid();
-          const normalized = normalizeAnswer(content);
+          const normalized = datasetPlan
+            ? content.trim()
+            : normalizeAnswer(content);
           if (settings.streaming) request.onContent?.(normalized);
           return {
             id: request.id ?? randomUUID(),

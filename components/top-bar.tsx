@@ -1,7 +1,6 @@
 export function TopBar({
   view,
   onChangeView,
-  onChangeVault,
   settingsOpen,
   onOpenSettings,
   aiTerminalOpen,
@@ -9,7 +8,6 @@ export function TopBar({
 }: Readonly<{
   view: "workspace" | "planet";
   onChangeView: (view: "workspace" | "planet") => void;
-  onChangeVault: () => void;
   settingsOpen: boolean;
   onOpenSettings: () => void;
   aiTerminalOpen: boolean;
@@ -20,12 +18,9 @@ export function TopBar({
       <div className="brand">
         <span className="brand-mark">W</span>
         <span>WONNYY</span>
-        <span className="version">ver 0.0.4</span>
+        <span className="version">Amadeus 0.0.5</span>
       </div>
       <nav className="top-nav" aria-label="Primary">
-        <button className="nav-item" onClick={onChangeVault}>
-          CHANGE VAULT
-        </button>
         <button
           className={`nav-item${!settingsOpen && !aiTerminalOpen && view === "workspace" ? " active" : ""}`}
           onClick={() => onChangeView("workspace")}

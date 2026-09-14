@@ -202,6 +202,7 @@ test("repair keeps thinking disabled even for capable models", async () => {
         });
       },
     });
+    await provider.describeModel("local");
     const result = await provider.complete({
       model: "local",
       messages: [{ role: "user", content: "Question" }],

@@ -75,10 +75,8 @@ export function PlanetNode({
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          onOpen(node.id);
-        } else if (event.key === " ") {
-          event.preventDefault();
-          onSelect(node.id, event.ctrlKey || event.metaKey);
+          if (event.shiftKey) onSelect(node.id, true);
+          else onOpen(node.id);
         }
       }}
     >

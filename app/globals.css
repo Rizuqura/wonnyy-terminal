@@ -325,4 +325,61 @@ button, input { font: inherit; } button { color: inherit; } .app-shell { height:
   .planet-grid { grid-template-columns: var(--sidebar-width, 175px) minmax(470px, 1fr) 170px; }
 }
 
+/* Context-building controls: quarter-strength enlargement for compact, readable desktop controls. */
+.planet-view { grid-template-rows: auto minmax(0, 1fr); }
+.planet-view-header { min-height: 36px; flex-wrap: wrap; padding: 3px 8px; gap: 5px 12px; font-size: 10px; }
+.planet-view-hint, .pv-count { color: #98a59f; }
+.planet-view-header > button { min-height: 24px; padding: 3px 8px; border: 1px solid var(--p-orange); background: #16110a; color: var(--p-orange); font: 10px ui-monospace, monospace; cursor: pointer; }
+.planet-view-header > button[aria-pressed="true"] { border-color: #70d6c4; color: #70d6c4; background: #102422; }
+.pv-crumbs { flex-wrap: wrap; margin-left: 0; min-width: 0; }
+.pv-crumb { min-height: 24px; padding: 3px; font-size: 10px; overflow-wrap: anywhere; }
+.pctrl-zoom { gap: 5px; }
+.pctrl-zoom button { width: 28px; height: 27px; font-size: 14px; color: #c1ccc5; }
+.pctrl-zoom-level { min-width: 42px; height: 27px; font-size: 10px; color: #c1ccc5; }
+.pctrl-check { min-height: 25px; padding: 3px 8px; font-size: 10px; color: #bac4be; }
+.pctrl-guide { width: 290px; font-size: 10px; }
+.planet-detail-panel { grid-template-rows: 33px minmax(0, 1fr); }
+.planet-detail-panel .planet-header { font-size: 10px; }
+.planet-detail-panel .planet-header button { width: 24px; height: 24px; font-size: 14px; }
+.pd-body, .station-panel { font-size: 9px; line-height: 1.5; }
+.pd-section-title { font-size: 10px; }
+.pd-action, .station-secondary { min-height: 25px; padding: 5px; font-size: 10px; line-height: 1.4; }
+.station-secondary, .context-summary { color: #a9b5ae; }
+.station-create { gap: 3px; margin: 9px 0 5px; }
+.station-create input, .station-search, .station-rename { min-height: 25px; padding: 5px; font-size: 10px; }
+.station-create button { flex: 0 0 28px; font-size: 14px; }
+.station-modes { gap: 5px; margin: 7px 0; }
+.station-modes button { min-height: 25px; padding: 5px; font-size: 10px; color: #a9b5ae; }
+.station-list { max-height: 188px; }
+.station-row { grid-template-columns: 24px 24px minmax(0, 1fr) auto 24px 24px; gap: 3px; min-height: 25px; }
+.station-row button { min-width: 24px; min-height: 24px; padding: 0; font-size: 10px; color: #a9b5ae; }
+.station-row small { font-size: 10px; color: #98a59f; }
+.station-row .station-filter.on { color: #70d6c4; background: #102422; }
+.station-row .station-assign.on { color: var(--p-orange); background: #292014; }
+.station-row .station-assign.mixed { color: #d4b379; }
+.context-list { max-height: 158px; }
+.context-list div { min-height: 25px; gap: 5px; }
+.context-list span { min-width: 0; }
+.context-list button { flex: 0 0 24px; min-height: 24px; font-size: 14px; color: #c39484; }
+.station-panel button:disabled, .pd-action:disabled { opacity: .45; cursor: not-allowed; }
+.file-row { min-height: 24px; align-items: center; padding-top: 4px; padding-bottom: 4px; font-size: 10px; color: #9ea9a3; }
+.tree-folder { min-height: 25px; padding-top: 0; padding-bottom: 0; font-size: 10px; color: #9ea9a3; }
+.tree-twist { flex: 0 0 18px; min-height: 24px; font-size: 10px; }
+.tree-folder-name { min-width: 0; min-height: 24px; overflow-wrap: anywhere; }
+.file-row .ticker { font-size: 9px; }
+.knowledge-sidebar .search-box { min-height: 25px; }
+.knowledge-sidebar .search-box input { font-size: 10px; }
+.vault-change, .pdf-search-result { min-height: 24px; font-size: 10px; }
+.planet-view button:focus-visible, .planet-detail-panel button:focus-visible, .knowledge-sidebar button:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+@media (min-width: 1400px) {
+  .workspace-grid { grid-template-columns: var(--sidebar-width, 193px) minmax(480px, 1fr) 280px; }
+  .planet-grid { grid-template-columns: var(--sidebar-width, 193px) minmax(440px, 1fr) 253px; }
+  .workspace-grid.workspace-grid-pdf { grid-template-columns: var(--sidebar-width, 193px) minmax(0, 1fr); }
+  .station-row { grid-template-columns: 24px 24px minmax(0, 1fr) auto 24px 24px; }
+}
+@media (max-width: 1399px) {
+  .station-row > span, .station-row > .station-rename { grid-column: 1 / -1; grid-row: 1; margin-top: 6px; }
+  .station-row > small { grid-column: 3 / 5; }
+}
+
 /* Local-only recorded chat runtime. */

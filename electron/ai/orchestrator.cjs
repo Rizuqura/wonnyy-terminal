@@ -8,6 +8,9 @@ const { contextIdentity } = require("./context-identity.cjs");
 const { budgetHistory } = require("./history-budget.cjs");
 const { validateAnswer, answerPrefix } = require("./response-validation.cjs");
 const { DEFAULTS } = require("./model-registry.cjs");
+const { createDatasetSession } = require("./dataset-session.cjs");
+const { planDataset } = require("./dataset-planner.cjs");
+const { validateDatasetAnswer } = require("./dataset-evidence.cjs");
 
 const ANSWER_FORMAT = Object.freeze({
   type: "object",
@@ -203,6 +206,7 @@ function createContextOrchestrator({
       let promptVersion = null;
       let sourcesAvailable = [];
       let sourcesActuallyRead = [];
+      let datasetSession;
       const recordMetadata = () =>
         options.conversationId
           ? {
@@ -262,6 +266,117 @@ function createContextOrchestrator({
           sources.push(source);
           sourcesActuallyRead.push(sourceReference(source));
         }
+        const csvSources = sources.filter((source) => source.type === "csv");
+        if (csvSources.length) {
+          if (
+            csvSources.reduce(
+              (sum, source) => sum + Buffer.byteLength(source.content),
+              0,
+            ) >
+            50 * 1024 * 1024
+          )
+            throw new ModelRuntimeError(
+              "MODEL_CONTEXT_TOO_LARGE",
+              "CSV analysis supports up to 50 MB of combined approved CSV data. Select fewer or smaller datasets.",
+            );
+          datasetSession = createDatasetSession(options.signal);
+          const profiles = await measure("datasetReadMs", () =>
+            datasetSession.call("load", { sources: csvSources }),
+          );
+          for (const source of csvSources) {
+            const profile = profiles.find(
+              (item) => item.sourceId === source.sourceId,
+            );
+            source.content = JSON.stringify({
+              kind: "dataset-profile",
+              ...profile,
+            });
+          }
+        }
+        if (options.prepareModel && typeof provider.prepare === "function") {
+          stage(
+            providerName === "ollama" ? "MODEL_LOADING" : "REMOTE_CONNECTING",
+          );
+          await measure("modelLoadMs", () =>
+            recoverTimeout("MODEL_LOADING", () =>
+              provider.prepare(request.model, settings, options.signal),
+            ),
+          );
+        }
+        if (datasetSession) {
+          stage("GENERATING");
+          const previousAnalyses = [];
+          for (const previous of (options.datasetHistory ?? []).slice(-2)) {
+            if (previous.contextIdentityId !== identity.id) continue;
+            let results;
+            try {
+              results = await datasetSession.call("query", {
+                queries: previous.queries,
+              });
+            } catch (error) {
+              options.signal?.throwIfAborted();
+              if (error.code !== "MODEL_INVALID_REQUEST") throw error;
+              // An older app may have accepted a now-unsupported query. Optional
+              // memory must not prevent a new analysis with current validation.
+              diagnostics.skippedDatasetHistory ??= [];
+              diagnostics.skippedDatasetHistory.push({
+                runId: previous.runId,
+                reason: error.message,
+              });
+              continue;
+            }
+            const entry = {
+              runId: previous.runId,
+              question: previous.question,
+              queries: previous.queries,
+              results,
+            };
+            // Analytical memory is optional and bounded independently of source data.
+            if (JSON.stringify([...previousAnalyses, entry]).length <= 6000)
+              previousAnalyses.push(entry);
+          }
+          diagnostics.datasetHistory = previousAnalyses;
+          for (const source of csvSources) {
+            const previousResults = previousAnalyses.flatMap((entry) =>
+              entry.results
+                .filter((result) => result.sourceId === source.sourceId)
+                .map((result) => ({ question: entry.question, result })),
+            );
+            if (previousResults.length)
+              source.content = JSON.stringify({
+                ...JSON.parse(source.content),
+                previousResults,
+              });
+          }
+          const results = await measure("datasetAnalysisMs", () =>
+            planDataset({
+              session: datasetSession,
+              sources,
+              model: request.model,
+              settings,
+              signal: options.signal,
+              history: request.history,
+              userMessage: request.userMessage,
+              diagnostics,
+              complete: (input) =>
+                recoverTimeout("GENERATING", () =>
+                  provider.complete({ ...input, id: runId, scope }),
+                ),
+            }),
+          );
+          for (const source of csvSources)
+            source.content = JSON.stringify({
+              kind: "dataset-analysis",
+              profile: JSON.parse(source.content),
+              computedResults: results.filter(
+                (result) => result.sourceId === source.sourceId,
+              ),
+              evidenceRule:
+                "Computed results cover all matched rows before pagination. Samples are previews only. Cite the file, columns, filters and matched row count. Do not claim unsupported analyses or calculate unseen results. Explain nulls and any truncation.",
+            });
+          await datasetSession.close();
+          datasetSession = null;
+        }
         const base = promptBuilder({
           userMessage: request.userMessage,
           sources,
@@ -276,16 +391,6 @@ function createContextOrchestrator({
           sources,
         });
         promptVersion = prompt.promptVersion;
-        if (options.prepareModel && typeof provider.prepare === "function") {
-          stage(
-            providerName === "ollama" ? "MODEL_LOADING" : "REMOTE_CONNECTING",
-          );
-          await measure("modelLoadMs", () =>
-            recoverTimeout("MODEL_LOADING", () =>
-              provider.prepare(request.model, settings, options.signal),
-            ),
-          );
-        }
         stage("GENERATING");
         const generate = (messages, answerRepair = false) =>
           recoverTimeout("GENERATING", () =>
@@ -300,6 +405,7 @@ function createContextOrchestrator({
               answerRepair,
               signal: options.signal,
               onContent: (raw) => {
+                if (csvSources.length) return;
                 const content = answerPrefix(raw);
                 if (content)
                   options.onEvent?.({ state: "GENERATING", content });
@@ -311,17 +417,38 @@ function createContextOrchestrator({
         );
         stage("VALIDATING");
         let answer;
-        try {
-          answer = validateAnswer(
+        const validate = (response) => {
+          const text = validateAnswer(
             response,
             request.userMessage,
             request.history,
           );
+          return diagnostics.datasetAnalysis
+            ? validateDatasetAnswer(
+                text,
+                [
+                  ...diagnostics.datasetAnalysis.results,
+                  ...(diagnostics.datasetHistory ?? []).flatMap(
+                    (entry) => entry.results,
+                  ),
+                ],
+                request.userMessage,
+                sources
+                  .filter((source) => source.type !== "csv")
+                  .map((source) => source.content),
+              )
+            : text;
+        };
+        try {
+          answer = validate(response);
         } catch (error) {
           if (
-            !["task_echo", "planning", "repeated_answer"].includes(
-              error.details?.reason,
-            )
+            ![
+              "task_echo",
+              "planning",
+              "repeated_answer",
+              "dataset_unsupported_number",
+            ].includes(error.details?.reason)
           )
             throw error;
           // One bounded final-answer repair within the same authorized run. Never
@@ -331,9 +458,11 @@ function createContextOrchestrator({
           diagnostics.initialUsage = response.usage;
           options.onEvent?.({ state: "VALIDATING", content: "" });
           const correction =
-            error.details.reason === "repeated_answer"
-              ? "The previous attempt copied an earlier answer to a different question. Answer the LAST user message directly from the approved source. Follow its requested count and format. Supply the requested facts or deliverable, not the earlier general summary."
-              : "The previous response only repeated the task or described a plan. Produce the requested content itself now. Use concrete facts from the source and discussion. The answer must be the actual completed deliverable, not an instruction to create it.";
+            error.details.reason === "dataset_unsupported_number"
+              ? "The previous answer introduced quantities absent from the computed dataset results. Use only the supplied computed values, without estimating, inferring missing totals or inventing units. If the needed calculation was not performed, state that limitation."
+              : error.details.reason === "repeated_answer"
+                ? "The previous attempt copied an earlier answer to a different question. Answer the LAST user message directly from the approved source. Follow its requested count and format. Supply the requested facts or deliverable, not the earlier general summary."
+                : "The previous response only repeated the task or described a plan. Produce the requested content itself now. Use concrete facts from the source and discussion. The answer must be the actual completed deliverable, not an instruction to create it.";
           const withCorrection = (messages) =>
             messages.map((message, index) =>
               index === 0
@@ -368,13 +497,53 @@ function createContextOrchestrator({
             generate(repairedMessages, true),
           );
           stage("VALIDATING");
-          answer = validateAnswer(
-            response,
-            request.userMessage,
-            request.history,
-          );
+          answer = validate(response);
         }
         if (response.diagnostics) diagnostics.provider = response.diagnostics;
+        if (diagnostics.datasetAnalysis) {
+          const analyses = [
+            diagnostics.datasetAnalysis,
+            ...(diagnostics.datasetHistory ?? []),
+          ];
+          const evidence = analyses.flatMap((analysis) =>
+            analysis.results.map((result, index) => {
+              const query = analysis.queries[index];
+              const fields =
+                query.metrics
+                  ?.map((metric) => `${metric.op}(${metric.column || "rows"})`)
+                  .join(", ") ||
+                query.columns?.join(", ") ||
+                "column profile";
+              const operators = {
+                eq: "=",
+                ne: "≠",
+                gt: ">",
+                gte: "≥",
+                lt: "<",
+                lte: "≤",
+                contains: "contains",
+                is_missing: "is blank",
+                not_missing: "is not blank",
+              };
+              const filters = query.filters?.length
+                ? query.filters
+                    .map(
+                      (filter) =>
+                        `${JSON.stringify(filter.column)} ${operators[filter.op]}${["is_missing", "not_missing"].includes(filter.op) ? "" : ` ${JSON.stringify(filter.value)}`}`,
+                    )
+                    .join(" AND ")
+                : "none";
+              const grouping = query.groupBy?.length
+                ? `; grouped by ${query.groupBy.map((group) => `${JSON.stringify(group.column)}${group.unit && group.unit !== "value" ? ` (${group.unit})` : ""}`).join(", ")}`
+                : "";
+              const growth = query.growth
+                ? `; growth of ${JSON.stringify(query.growth.metric)} from ${JSON.stringify(query.growth.from)} to ${JSON.stringify(query.growth.to)}`
+                : "";
+              return `${analysis.runId ? "Recomputed earlier analysis. " : ""}Source: ${JSON.stringify(result.sourceId)}; ${result.matchedRows}/${result.totalRows} rows matched; ${fields}; filters: ${filters}${grouping}${growth}${result.truncated ? "; result preview is paginated" : ""}.`;
+            }),
+          );
+          answer += `\n\n${evidence.join("\n")}`;
+        }
         const completedMs = now();
         const result = {
           ...response,
@@ -461,6 +630,8 @@ function createContextOrchestrator({
           );
         }
         throw error;
+      } finally {
+        await datasetSession?.close();
       }
     },
   };

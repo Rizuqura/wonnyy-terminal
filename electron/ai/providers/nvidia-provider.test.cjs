@@ -4,6 +4,27 @@ const { NvidiaProvider } = require("./nvidia-provider.cjs");
 const { DEFAULTS } = require("../model-registry.cjs");
 const { ModelRuntimeError } = require("../model-errors.cjs");
 const { validateAnswer, answerPrefix } = require("../response-validation.cjs");
+const { PLAN_FORMAT } = require("../dataset-planner.cjs");
+
+test("NVIDIA preserves structured dataset requests without answer wrapping", async () => {
+  const plan = { queries: [{ sourceId: "sales.csv", operation: "profile" }] };
+  const provider = new NvidiaProvider({
+    credentials,
+    fetchImpl: async (_url, init) => {
+      assert.match(
+        JSON.parse(init.body).messages[0].content,
+        /JSON object matching this schema/,
+      );
+      assert.doesNotMatch(
+        JSON.parse(init.body).messages[0].content,
+        /Write the completed answer directly/,
+      );
+      return stream([part(JSON.stringify(plan), "stop")]);
+    },
+  });
+  const result = await provider.complete({ ...request(), format: PLAN_FORMAT });
+  assert.deepEqual(JSON.parse(result.content), plan);
+});
 
 test("NVIDIA normalizes task answers without requiring model-generated JSON", async () => {
   for (const [raw, expected] of [
@@ -165,19 +186,92 @@ test("NVIDIA failures remain bounded and sanitized", async () => {
         calls++;
         return new Response("nvapi-test-secret source-secret", {
           status,
-          headers: { "retry-after": "7" },
+          headers: { "retry-after": "11" },
         });
       },
     });
     await assert.rejects(provider.complete(request()), (error) => {
       assert.equal(error.code, code);
-      assert.equal(error.details.retryAfterSeconds, 7);
+      assert.equal(error.details.retryAfterSeconds, 11);
       assert.doesNotMatch(error.message, /secret/);
       return true;
     });
     assert.equal(calls, 1);
   }
 });
+test("NVIDIA recovers transient HTTP failures using the identical request", async () => {
+  for (const status of [500, 502, 503, 504]) {
+    const bodies = [];
+    let released = false;
+    const provider = new NvidiaProvider({
+      credentials,
+      fetchImpl: async (_url, init) => {
+        bodies.push(init.body);
+        if (bodies.length === 1)
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                released = true;
+              },
+            }),
+            { status },
+          );
+        assert.equal(released, true);
+        return stream([part("Recovered answer", "stop")]);
+      },
+    });
+    const result = await provider.complete(request());
+    assert.equal(validateAnswer(result), "Recovered answer");
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0], bodies[1]);
+  }
+});
+
+test("NVIDIA stops after two automatic server retries", async () => {
+  let calls = 0;
+  const provider = new NvidiaProvider({
+    credentials,
+    fetchImpl: async () => {
+      calls++;
+      return new Response("Unavailable", { status: 504 });
+    },
+  });
+  await assert.rejects(provider.complete(request()), {
+    code: "REMOTE_SERVER_ERROR",
+  });
+  assert.equal(calls, 3);
+});
+
+test("NVIDIA retry backoff respects cancellation and the original deadline", async () => {
+  for (const cancel of [false, true]) {
+    let calls = 0;
+    const controller = new AbortController();
+    const provider = new NvidiaProvider({
+      credentials,
+      fetchImpl: async () => {
+        calls++;
+        if (cancel)
+          setTimeout(
+            () =>
+              controller.abort(
+                new ModelRuntimeError("MODEL_CANCELLED", "Stopped"),
+              ),
+            5,
+          );
+        return new Response("Unavailable", { status: 504 });
+      },
+    });
+    await assert.rejects(
+      provider.request("chat/completions", {}, () => assert.fail(), {
+        signal: controller.signal,
+        absoluteMs: 30,
+      }),
+      { code: cancel ? "MODEL_CANCELLED" : "REMOTE_TIMEOUT" },
+    );
+    assert.equal(calls, 1);
+  }
+});
+
 test("NVIDIA rejects malformed, truncated and inline reasoning streams without retrying", async () => {
   for (const events of [
     [part("text")],

@@ -272,6 +272,27 @@ class ChatService {
           );
       }
       let userMessageId = randomUUID();
+      // Only backend-owned successful runs from this exact approved snapshot
+      // may contribute analytical memory. Recompute their queries below.
+      const datasetHistory = [];
+      for (const answer of conversation.messages
+        .filter((message) => message.role === "assistant")
+        .slice(-2)) {
+        if (!answer.runId) continue;
+        const previous = await readModelRun(root, answer.runId);
+        if (
+          previous?.status === "succeeded" &&
+          previous.contextIdentity?.id === identity.id &&
+          previous.diagnostics?.datasetAnalysis?.queries
+        ) {
+          datasetHistory.push({
+            runId: previous.runId,
+            contextIdentityId: identity.id,
+            question: previous.userMessage,
+            queries: previous.diagnostics.datasetAnalysis.queries,
+          });
+        }
+      }
       if (input.retryOf) {
         const failed = conversation.attempts.find(
           (attempt) => attempt.requestId === input.retryOf,
@@ -330,6 +351,7 @@ class ChatService {
           requestId: input.requestId,
           conversationId: conversation.id,
           contextIdentity: identity,
+          datasetHistory,
           earlierExchangesDropped: Math.max(0, history.length / 2 - 12),
           settings,
           prepareModel: true,

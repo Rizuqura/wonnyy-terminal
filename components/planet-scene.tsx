@@ -42,6 +42,30 @@ export function PlanetScene({ graph, selectedIds, onSelect, onSelectMany, onOpen
   const [asteroidsVisible, setAsteroidsVisible] = useState(true);
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [panMode, setPanMode] = useState(false);
+  const spaceHeld = useRef(false);
+  const [spacePanning, setSpacePanning] = useState(false);
+  useEffect(() => {
+    const clear = () => { spaceHeld.current = false; setSpacePanning(false); };
+    const down = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof Element && (target.closest("input, textarea, select, [contenteditable], dialog") || isSceneOverlay(target))) return;
+      const canvas = canvasRef.current;
+      if (!canvas || !(canvas.matches(":hover") || (target instanceof Node && canvas.contains(target)))) return;
+      event.preventDefault();
+      spaceHeld.current = true;
+      setSpacePanning(true);
+    };
+    const up = (event: KeyboardEvent) => { if (event.code === "Space") clear(); };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
   const dragStart = useRef<{ px: number; py: number; ox: number; oy: number; moved: boolean; box: boolean; additive: boolean; pointerId: number } | null>(null);
 
   const layout = useMemo(
@@ -195,7 +219,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onSelectMany, onOpen
     event.preventDefault();
     event.currentTarget.focus();
     setDragging(true);
-    dragStart.current = { px: event.clientX, py: event.clientY, ox: transform.x, oy: transform.y, moved: false, box: event.button === 0 && !event.altKey && !panMode, additive: event.ctrlKey || event.metaKey || event.shiftKey, pointerId: event.pointerId };
+    dragStart.current = { px: event.clientX, py: event.clientY, ox: transform.x, oy: transform.y, moved: false, box: event.button === 0 && !spaceHeld.current && !panMode, additive: event.shiftKey, pointerId: event.pointerId };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
@@ -235,9 +259,9 @@ export function PlanetScene({ graph, selectedIds, onSelect, onSelectMany, onOpen
       const rect = event.currentTarget.getBoundingClientRect();
       const ids = boxSelectPlanetNodes(graph.nodes.filter(isVisible), layout.positions, transform, { x: start.px - rect.left, y: start.py - rect.top }, { x: event.clientX - rect.left, y: event.clientY - rect.top }, semanticBand);
       onSelectMany(ids.filter((id) => id !== graph.rootId), start.additive);
-    } else if (!moved && event.button === 0) {
+    } else if (!moved && event.button === 0 && start.box) {
       const picked = pickAt(event.clientX, event.clientY);
-      onSelect(picked?.id ?? null, picked ? event.ctrlKey || event.metaKey : false);
+      onSelect(picked?.id ?? null, picked ? event.shiftKey : false);
       setHoveredId(picked?.id ?? null);
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -314,7 +338,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onSelectMany, onOpen
             })}
           </span>
         ) : (
-          <span className="planet-view-hint">Drag to {panMode ? "pan" : "select"} · Ctrl/Shift adds · Alt-drag pans</span>
+          <span className="planet-view-hint">Drag to {panMode ? "pan" : "select"} · Shift adds · Space + drag pans</span>
         )}
         <button type="button" aria-pressed={panMode} onClick={() => setPanMode(!panMode)}>{panMode ? "Pan mode" : "Select mode"}</button>
         <span className="pv-count">{selectedIds.size} SELECTED · {graph.nodes.length} NODES</span>
@@ -325,7 +349,7 @@ export function PlanetScene({ graph, selectedIds, onSelect, onSelectMany, onOpen
         ref={canvasRef}
         tabIndex={0}
         aria-label="Planet View selection canvas"
-        style={{ touchAction: "none", cursor: panMode ? "grab" : "crosshair" }}
+        style={{ touchAction: "none", cursor: panMode || spacePanning ? "grab" : "crosshair" }}
         onKeyDown={(event) => { if (event.key === "Escape" && !isSceneOverlay(event.target)) cancelDrag(); }}
         onPointerCancel={cancelDrag}
         onLostPointerCapture={cancelDrag}

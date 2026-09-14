@@ -291,26 +291,29 @@ class GeminiProvider {
         "MODEL_INVALID_REQUEST",
         "A single system instruction must precede the conversation.",
       );
-    const format = parse(
-      z
-        .object({
-          type: z.literal("object"),
-          properties: z
+    const { isPlanFormat } = require("../dataset-planner.cjs");
+    const format = isPlanFormat(request.format)
+      ? request.format
+      : parse(
+          z
             .object({
-              answer: z
+              type: z.literal("object"),
+              properties: z
                 .object({
-                  type: z.literal("string"),
-                  description: z.string().max(1000).optional(),
+                  answer: z
+                    .object({
+                      type: z.literal("string"),
+                      description: z.string().max(1000).optional(),
+                    })
+                    .strict(),
                 })
                 .strict(),
+              required: z.tuple([z.literal("answer")]),
+              additionalProperties: z.literal(false),
             })
             .strict(),
-          required: z.tuple([z.literal("answer")]),
-          additionalProperties: z.literal(false),
-        })
-        .strict(),
-      request.format,
-    );
+          request.format,
+        );
     const contents = [];
     for (const message of messages.slice(1)) {
       const role = message.role === "assistant" ? "model" : "user";

@@ -16,6 +16,8 @@ npm run typecheck
 npm run build               # static production export
 npm run test:chat:electron   # build + hidden Electron smoke with mock Ollama
 npm run test:chat:live       # real local Qwen acceptance, isolated sources
+npm run test:dataset:live    # real local CSV analysis + follow-ups, 16,000 rows
+npm run test:dataset:electron # build + hidden Electron CSV/IPC test, 20,000 rows
 npm run test:chat:online     # real Gemini acceptance; requires key + model env vars
 npm run test:chat:online:electron # hidden Electron online smoke, synthetic provider
 npm run format:check
@@ -45,6 +47,20 @@ The initial vault is `C:\bank`, configurable with `WONNYY_VAULT_PATH`; Change Va
 6. Use Settings to switch installed models. Stop an active generation before changing settings.
 
 Visual selection does not grant model access. Old chat messages remain viewable when a source changes or disappears, but the old source version cannot be resumed because source snapshots are not stored.
+
+## CSV analysis
+
+NVIDIA HTTP 500/502/503/504 failures are retried automatically up to twice before an answer stream is consumed, within the original request deadline. This retries the failed model request without restarting completed CSV calculations. Backoff respects Retry-After up to ten seconds; longer waits require explicit retry. Cancellation, authentication failures, rate limits and interrupted answer streams are not automatically retried.
+
+Add CSV files to Active Context, select an installed model, and ask a dataset question. Wonnyy parses the full CSV in a cancellable worker, sends column profiles and a small sample to the model, validates its structured requests, and executes calculations locally. The final answer receives computed results and includes source/filter evidence. The run audit stores requests and results under `diagnostics.datasetAnalysis`.
+
+Follow-ups can also receive results from the last two successful analyses. Their queries are rerun against the same approved source version, bounded to 6,000 characters of analytical history, and recorded under `diagnostics.datasetHistory`. The source footer identifies these recomputed earlier analyses.
+
+Supported operations include column and missing-value inspection, row retrieval, AND filters, sorting, pagination, counts, sums, averages, minimum/maximum, grouped comparisons, ISO date trends, and percentage growth between periods. Aggregations run over all matching rows before output pagination. Each turn can request up to six operations. Follow-ups use conversation history and re-read the approved source version. With a remote model, profiles, samples and computed results are sent to that provider.
+
+CSV input supports commas, semicolons, tabs and pipes, UTF-8 BOM, escaped quotes and multiline cells. Headers must be unique and non-empty. Limits are 50 MB of combined CSV input and 200 columns per file; returned rows are capped at 100 per query. Large results must be narrowed or aggregated. Markdown/PDF text and returned evidence still need to fit the model context window. Numeric operations use double precision; blank numeric cells are excluded and counted. Currency symbols, thousands separators, percentages and ambiguous date formats require cleaning. Dates use ISO calendar dates as written; growth with an absent period or zero baseline returns null. Arbitrary code, SQL, joins, forecasting and automatic data cleaning are not supported.
+
+Malformed files and invalid requests fail explicitly. Request schemas constrain filenames and columns to the approved dataset. A short task statement resolves conversation references before queries are produced. One request correction is allowed; a model that still cannot produce a valid request returns an error. CSV answers are checked before display for numeric values absent from the supplied evidence, with one answer correction allowed. This check does not prove that a model interpreted the question correctly; inspect the source/filter evidence for that. `test:dataset:live` verifies the default `qwen3:4b` model against isolated known-answer data and writes `test-results/dataset-live.json`. Set `WONNYY_DATASET_MODEL` to validate another installed model.
 
 ## Project ownership
 

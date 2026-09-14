@@ -4,6 +4,7 @@ const { GeminiProvider } = require("./gemini-provider.cjs");
 const { DEFAULTS } = require("../model-registry.cjs");
 const { ANSWER_FORMAT } = require("../orchestrator.cjs");
 const { ModelRuntimeError } = require("../model-errors.cjs");
+const { PLAN_FORMAT, planFormat } = require("../dataset-planner.cjs");
 const credentials = {
   get: async () => "test-secret-key",
   status: async () => ({ configured: true, secureStorageAvailable: true }),
@@ -46,6 +47,49 @@ function stream(values, split = false) {
     { headers: { "content-type": "text/event-stream" } },
   );
 }
+
+test("Gemini accepts the controlled dataset planning schema and returns its JSON unchanged", async () => {
+  const plan = { queries: [{ sourceId: "sales.csv", operation: "profile" }] };
+  const provider = new GeminiProvider({
+    credentials,
+    fetchImpl: async (_url, init) => {
+      assert.deepEqual(
+        JSON.parse(init.body).generationConfig.responseJsonSchema,
+        PLAN_FORMAT,
+      );
+      return stream([chunk(JSON.stringify(plan), "STOP")]);
+    },
+  });
+  const result = await provider.complete({ ...request(), format: PLAN_FORMAT });
+  assert.deepEqual(JSON.parse(result.content), plan);
+});
+
+test("Gemini forwards dataset-specific name constraints intact", async () => {
+  const format = planFormat([
+    {
+      sourceId: "sales.csv",
+      type: "csv",
+      content: JSON.stringify({ columns: [{ name: "amount" }] }),
+    },
+  ]);
+  const provider = new GeminiProvider({
+    credentials,
+    fetchImpl: async (_url, init) => {
+      assert.deepEqual(
+        JSON.parse(init.body).generationConfig.responseJsonSchema,
+        format,
+      );
+      return stream([
+        chunk(
+          '{"queries":[{"sourceId":"sales.csv","operation":"profile"}]}',
+          "STOP",
+        ),
+      ]);
+    },
+  });
+  const result = await provider.complete({ ...request(), format });
+  assert.equal(JSON.parse(result.content).queries[0].sourceId, "sales.csv");
+});
 
 test("Gemini normalizes split UTF-8 SSE, roles, JSON schema, hidden thinking and actual model identity", async () => {
   const seen = [];
