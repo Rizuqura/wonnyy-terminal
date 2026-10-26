@@ -1,4 +1,5 @@
 const fs = require("node:fs/promises");
+const { ContextBoxStore } = require("./context-box-store.cjs");
 const { randomUUID } = require("node:crypto");
 const stations = require("../station-service.cjs");
 const {
@@ -29,10 +30,11 @@ function assertFields(value, fields) {
 }
 
 class ChatService {
-  constructor({ provider, registry, knowledge = stations }) {
+  constructor({ provider, registry, knowledge = stations, agents }) {
     this.provider = provider;
     this.registry = registry;
     this.knowledge = knowledge;
+    this.agents = agents;
     this.stores = new Map();
     this.active = null;
     this.pendingMutations = 0;
@@ -46,7 +48,7 @@ class ChatService {
           readModelRun(root, id),
         );
         await store.recover();
-        return { root, store };
+        return { root, store, boxes: new ContextBoxStore(root) };
       })();
       this.stores.set(root, loading);
       loading.catch(() => this.stores.delete(root));
@@ -113,10 +115,190 @@ class ChatService {
   async list(vault) {
     return (await this.store(vault)).store.list();
   }
+  async listBoxes(vault) {
+    return (await this.store(vault)).boxes.list();
+  }
+  async saveBox(vault, input) {
+    assertFields(input, ["name"]);
+    return this.exclusive(async () => {
+      const { root, boxes } = await this.store(vault);
+      return boxes.create(
+        input.name,
+        await this.context(root, { activeStationIds: [], matchMode: "any" }),
+      );
+    });
+  }
+  async renameBox(vault, input) {
+    assertFields(input, ["id", "name"]);
+    return this.exclusive(async () =>
+      (await this.store(vault)).boxes.rename(input.id, input.name),
+    );
+  }
+  async previewBoxSelection(vault, paths) {
+    return this.knowledge.previewBoxSelection(
+      (await this.store(vault)).root,
+      paths,
+    );
+  }
+  async inspectBox(vault, id) {
+    const { root, boxes } = await this.store(vault),
+      box = await boxes.get(id);
+    return {
+      ...box,
+      items: await this.knowledge.inspectBoxSources(root, box.items),
+    };
+  }
+  async editBox(vault, input) {
+    assertFields(input, [
+      "action",
+      "id",
+      "name",
+      "paths",
+      "itemId",
+      "relativePath",
+    ]);
+    return this.exclusive(async () => {
+      const { root, boxes } = await this.store(vault);
+      if (input.action === "delete") return boxes.remove(input.id);
+      if (input.action === "remove")
+        return boxes.removeItem(input.id, input.itemId);
+      if (input.action === "relink") {
+        const preview = await this.knowledge.previewBoxSelection(root, [
+          input.relativePath,
+        ]);
+        if (
+          preview.files.length !== 1 ||
+          preview.files[0] !== input.relativePath
+        )
+          throw new ModelRuntimeError(
+            "MODEL_INVALID_REQUEST",
+            "Choose one supported file in this vault.",
+          );
+        return boxes.relink(input.id, input.itemId, input.relativePath);
+      }
+      if (!["create", "add"].includes(input.action))
+        throw new ModelRuntimeError(
+          "MODEL_INVALID_REQUEST",
+          "Unknown Context Box action.",
+        );
+      const preview = await this.knowledge.previewBoxSelection(
+        root,
+        input.paths ?? [],
+      );
+      if (preview.skipped.length)
+        throw new ModelRuntimeError(
+          "MODEL_INVALID_REQUEST",
+          "Selection changed. Review supported files again before saving.",
+        );
+      return input.action === "create"
+        ? boxes.create(input.name, null, preview.files)
+        : boxes.add(input.id, preview.files);
+    });
+  }
+  async switchBox(vault, input) {
+    assertFields(input, ["conversationId", "contextBoxId"]);
+    return this.exclusive(async () => {
+      const { root, store, boxes } = await this.store(vault),
+        box = await boxes.get(input.contextBoxId);
+      const identity = contextIdentity(
+        await this.boundScope(
+          root,
+          { contextBoxId: box.id },
+          { ownerId: "switch:" + randomUUID() },
+        ),
+      );
+      return store.update(input.conversationId, (value) => {
+        this.upgradeConversation(value);
+        value.contextBoxId = box.id;
+        value.contextBoxRevision = box.revision;
+        value.contextIdentity = identity;
+        value.contextTransitions ??= [];
+        value.contextTransitions.push({
+          contextBoxId: box.id,
+          contextBoxRevision: box.revision,
+          contextIdentity: identity,
+          changedAt: new Date().toISOString(),
+        });
+      });
+    });
+  }
+  upgradeConversation(value) {
+    if (value.schemaVersion === 3) return;
+    for (const message of value.messages)
+      if (message.role === "assistant")
+        message.contextIdentity = value.contextIdentity;
+    for (const attempt of value.attempts)
+      attempt.contextIdentity = value.contextIdentity;
+    value.schemaVersion = 3;
+    value.creationId ??= randomUUID();
+  }
+  async boundScope(root, conversation, scope, pinned = false) {
+    if (!conversation.contextBoxId)
+      throw new ModelRuntimeError(
+        "MODEL_CONTEXT_INVALID",
+        "Legacy chat is read-only. Create a bound chat with a Context Box.",
+      );
+    const box = await (
+      await this.store(root)
+    ).boxes.get(conversation.contextBoxId);
+    return this.knowledge.prepareBrainScope(
+      root,
+      { ...scope, activeStationIds: [], matchMode: "any" },
+      pinned
+        ? conversation.contextIdentity.sources
+        : box.items.map((item) => ({
+            sourceId: item.relativePath,
+            relativePath: item.relativePath,
+          })),
+      !pinned,
+    );
+  }
+  async checkConversation(vault, id) {
+    const { root, store } = await this.store(vault);
+    return contextIdentity(
+      await this.boundScope(root, await store.read(id), {
+        ownerId: "check:" + randomUUID(),
+      }),
+    );
+  }
   async create(vault, input) {
     return this.exclusive(async () => {
       const { root, store } = await this.store(vault);
-      return store.create(await this.context(root, input));
+      assertFields(input, ["contextBoxId", "creationId", "agentId"]);
+      const agentId = input.agentId ?? "wonnyy-agent";
+      if (
+        typeof agentId !== "string" ||
+        !Object.hasOwn(require("./agent-policy.cjs").AGENT_DEFINITIONS, agentId)
+      )
+        throw new ModelRuntimeError("MODEL_INVALID_REQUEST", "Unknown agent.");
+      if (this.agents) await this.agents.get(agentId);
+      validId(input.creationId);
+      const existing = (await store.list()).find(
+        (c) => c.creationId === input.creationId,
+      );
+      if (existing) {
+        if (
+          existing.contextBoxId !== input.contextBoxId ||
+          existing.agentId !== agentId
+        )
+          throw new ModelRuntimeError(
+            "MODEL_INVALID_REQUEST",
+            "Creation IDs cannot be reused for a different Context Box or agent.",
+          );
+        return existing;
+      }
+      const box = await (await this.store(root)).boxes.get(input.contextBoxId);
+      const candidate = {
+        contextBoxId: box.id,
+        contextBoxRevision: box.revision,
+        contextIdentity: box.contextIdentity,
+      };
+      const identity = contextIdentity(
+        await this.boundScope(root, candidate, {
+          ownerId: "create:" + randomUUID(),
+        }),
+      );
+      return store.create(identity, box, input.creationId, agentId);
     });
   }
   async rename(vault, input) {
@@ -152,12 +334,7 @@ class ChatService {
     return this.exclusive(async () => {
       const { root, store } = await this.store(vault);
       const conversation = await store.read(id);
-      await this.knowledge.approveChatSource(
-        root,
-        conversation.contextIdentity.sources.length === 1
-          ? conversation.contextIdentity.sources[0]
-          : conversation.contextIdentity.sources,
-      );
+      await this.checkConversation(root, id);
       return conversation;
     });
   }
@@ -206,6 +383,9 @@ class ChatService {
     try {
       ({ root, store } = await this.store(vault));
       let conversation = await store.read(input.conversationId);
+      const agentConfig = this.agents
+        ? await this.agents.get(conversation.agentId)
+        : null;
       const previous = conversation.attempts.find(
         (attempt) => attempt.requestId === input.requestId,
       );
@@ -231,18 +411,31 @@ class ChatService {
               : await readModelRun(root, previous.runId),
         };
       }
-      const identity = await this.context(root, {
-        activeStationIds: input.activeStationIds,
-        matchMode: input.matchMode,
-      });
+      let identity;
+      try {
+        identity = contextIdentity(
+          await this.boundScope(root, conversation, {
+            ownerId: "check:" + runId,
+          }),
+        );
+      } catch (error) {
+        if (error.code === "BRAIN_SOURCE_CHANGED")
+          throw new ModelRuntimeError("MODEL_CONTEXT_INVALID", error.message);
+        throw error;
+      }
+      const contextChanged = identity.id !== conversation.contextIdentity.id;
       if (
-        identity.id !== input.expectedContextId ||
-        identity.id !== conversation.contextIdentity.id
+        ![identity.id, conversation.contextIdentity.id].includes(
+          input.expectedContextId,
+        )
       )
         throw new ModelRuntimeError(
           "MODEL_CONTEXT_INVALID",
-          "This chat belongs to a different approved source version. Start a new chat or explicitly resume its source.",
+          "This chat's binding changed while the request was prepared. Recheck the attached box before sending.",
         );
+      const boxForTurn = await (
+        await this.store(root)
+      ).boxes.get(conversation.contextBoxId);
       const settings = await this.registry.read();
       active.controller.signal.throwIfAborted();
       timer = setTimeout(
@@ -255,12 +448,21 @@ class ChatService {
           ),
         settings.absoluteTimeoutMs,
       );
+      emit({
+        state: "MODEL_CHECKING",
+        status: { message: "Checking selected model availability." },
+      });
       await this.registry.validateSelection(settings, {
         signal: active.controller.signal,
       });
       const history = [];
       for (const answer of conversation.messages.filter(
-        (message) => message.role === "assistant",
+        (message) =>
+          message.role === "assistant" &&
+          (message.contextIdentity ?? conversation.contextIdentity).id ===
+            identity.id &&
+          (!message.contextBox ||
+            message.contextBox.id === conversation.contextBoxId),
       )) {
         const user = conversation.messages.find(
           (message) => message.id === answer.userMessageId,
@@ -303,15 +505,20 @@ class ChatService {
           conversation.messages.find(
             (message) => message.id === failed.userMessageId,
           )?.content !== question ||
-          conversation.attempts.at(-1) !== failed
+          conversation.attempts.at(-1) !== failed ||
+          (failed.contextIdentity ?? conversation.contextIdentity).id !==
+            identity.id
         )
           throw new ModelRuntimeError(
             "MODEL_INVALID_REQUEST",
-            "Only the latest failed turn can be retried.",
+            "Only the latest failed turn with unchanged Context Box sources can be retried. Send a new message if the box or its files changed.",
           );
         userMessageId = failed.userMessageId;
       }
       conversation = await store.update(conversation.id, (value) => {
+        this.upgradeConversation(value);
+        value.contextIdentity = identity;
+        value.contextBoxRevision = boxForTurn.revision;
         if (!input.retryOf)
           value.messages.push({
             id: userMessageId,
@@ -326,12 +533,22 @@ class ChatService {
           userMessageId,
           status: "pending",
           error: null,
+          contextIdentity: identity,
         });
       });
       pending = true;
-      emit({ state: "PREPARING_CONTEXT", conversation });
+      emit({
+        state: "PREPARING_CONTEXT",
+        conversation,
+        status: {
+          message: contextChanged
+            ? "Context Box sources changed. Reading the latest files; previous answers retain their original evidence."
+            : "Reading this chat's Context Box.",
+        },
+      });
       const orchestrator = createContextOrchestrator({
-        prepareScope: (scope) => this.knowledge.prepareBrainScope(root, scope),
+        prepareScope: (scope) =>
+          this.boundScope(root, conversation, scope, true),
         readSource: (source) => this.knowledge.readBrainSource(root, source),
         provider:
           this.registry.providerFor?.(settings.providerId) ?? this.provider,
@@ -351,7 +568,10 @@ class ChatService {
           requestId: input.requestId,
           conversationId: conversation.id,
           contextIdentity: identity,
+          contextChanged,
           datasetHistory,
+          contextBox: boxForTurn,
+          agentConfig,
           earlierExchangesDropped: Math.max(0, history.length / 2 - 12),
           settings,
           prepareModel: true,
@@ -368,7 +588,15 @@ class ChatService {
           run,
         ),
       );
-      emit({ state: "READY", conversation, diagnostics: run.diagnostics });
+      emit({
+        state: run.diagnostics?.contextInsufficient
+          ? "CONTEXT_INSUFFICIENT"
+          : run.diagnostics?.limitedContext
+            ? "LIMITED_CONTEXT"
+            : "READY",
+        conversation,
+        diagnostics: run.diagnostics,
+      });
       return { conversation, run };
     } catch (error) {
       if (pending && !committed) {
@@ -389,7 +617,15 @@ class ChatService {
       }
       if (active.controller.signal.aborted && !committed)
         error = active.controller.signal.reason;
-      emit({ state: "ERROR", error: serializeModelError(error) });
+      emit({
+        state:
+          error.code === "MODEL_CANCELLED"
+            ? "CANCELLED"
+            : error.code === "CONTEXT_INSUFFICIENT"
+              ? "CONTEXT_INSUFFICIENT"
+              : "ERROR",
+        error: serializeModelError(error),
+      });
       throw error;
     } finally {
       clearTimeout(timer);

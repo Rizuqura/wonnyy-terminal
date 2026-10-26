@@ -5,6 +5,7 @@ const {
   shell,
   ipcMain,
   safeStorage,
+  nativeImage,
 } = require("electron");
 const path = require("path");
 const {
@@ -20,6 +21,10 @@ const { ChatService } = require("./ai/chat-service.cjs");
 const { ModelRegistry } = require("./ai/model-registry.cjs");
 const { ProviderRegistry } = require("./ai/provider-registry.cjs");
 const { CredentialStore } = require("./ai/credential-store.cjs");
+const { AgentStore } = require("./ai/agent-store.cjs");
+const {
+  OpenRouterProvider,
+} = require("./ai/providers/openrouter-provider.cjs");
 const { NvidiaProvider } = require("./ai/providers/nvidia-provider.cjs");
 const { GeminiProvider } = require("./ai/providers/gemini-provider.cjs");
 const { registerAiIpc } = require("./ai/ipc.cjs");
@@ -55,7 +60,7 @@ function changeVaultKnowledge(operation) {
 
 async function selectVaultFolder() {
   const result = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow(), {
-    title: "Select Wonnyy knowledge vault",
+    title: "Select QTerminal knowledge vault",
     defaultPath: activeVaultPath,
     properties: ["openDirectory"],
   });
@@ -82,8 +87,10 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: "#0a0d0e",
-    title: "Wonnyy — Amadeus 0.0.6",
-    icon: path.join(__dirname, "..", "build", "icon.png"),
+    title: "QTerminal",
+    icon: nativeImage.createFromPath(
+      path.join(__dirname, "..", "build", "icon.png"),
+    ),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -111,6 +118,18 @@ function createWindow() {
     window.loadFile(path.join(__dirname, "..", "out", "index.html"));
   }
 }
+
+const { selectUserDataPath } = require("./user-data-path.cjs");
+app.setPath(
+  "userData",
+  selectUserDataPath(
+    app.getPath("appData"),
+    app.getPath("userData"),
+    undefined,
+    app.commandLine.hasSwitch("user-data-dir"),
+  ),
+);
+app.setName("QTerminal");
 
 app.whenReady().then(() => {
   app.setAppUserModelId("com.wonnyy.amadeus");
@@ -176,10 +195,40 @@ app.whenReady().then(() => {
     ollama: provider,
     gemini: new GeminiProvider({ credentials }),
     nvidia: new NvidiaProvider({ credentials }),
+    openrouter: new OpenRouterProvider({ credentials }),
   });
   const registry = new ModelRegistry(providers, app.getPath("userData"));
-  chatService = new ChatService({ provider, registry });
+  const agents = new AgentStore(app.getPath("userData"), (bytes) =>
+    nativeImage.createFromBuffer(bytes),
+  );
+  chatService = new ChatService({ provider, registry, agents });
   registerAiIpc({
+    agents,
+    chooseAvatar: async () => {
+      const result = await dialog.showOpenDialog({
+        title: "Choose agent profile picture",
+        properties: ["openFile"],
+        filters: [
+          {
+            name: "Profile pictures",
+            extensions: ["png", "jpg", "jpeg", "webp"],
+          },
+        ],
+      });
+      if (result.canceled || !result.filePaths[0]) return null;
+      const file = result.filePaths[0],
+        fs = require("node:fs/promises");
+      const stat = await fs.stat(file);
+      if (!stat.isFile() || stat.size > 5 * 1024 * 1024)
+        throw new ModelRuntimeError(
+          "MODEL_INVALID_REQUEST",
+          "Choose a profile picture up to 5 MB.",
+        );
+      return agents.prepareAvatar(
+        await fs.readFile(file),
+        path.extname(file).toLowerCase(),
+      );
+    },
     credentials,
     ipcMain,
     getVault: () => activeVaultPath,

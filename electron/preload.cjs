@@ -23,7 +23,7 @@ async function invokeModel(channel, input) {
 // Future desktop capabilities must be exposed here deliberately, not by giving
 // renderer components unrestricted Node.js or filesystem access.
 contextBridge.exposeInMainWorld("wonnyyDesktop", {
-  apiVersion: 12,
+  apiVersion: 18,
   platform: process.platform,
   vault: {
     getSnapshot: () => ipcRenderer.invoke("vault:getSnapshot"),
@@ -55,6 +55,32 @@ contextBridge.exposeInMainWorld("wonnyyDesktop", {
     readBrainSource: (input) => invokeBrain("brain:readSource", input),
   },
   ai: {
+    openRouterUsage: (input) => invokeModel("ai:openRouterUsage", input),
+    onUsageChanged: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on("ai:usageChanged", listener);
+      return () => ipcRenderer.removeListener("ai:usageChanged", listener);
+    },
+    getAgent: (id) => invokeModel("ai:getAgent", id),
+    saveAgent: (input) => invokeModel("ai:saveAgent", input),
+    chooseAgentAvatar: () => invokeModel("ai:chooseAgentAvatar"),
+    previewBoxSelection: (paths) =>
+      invokeModel("ai:previewBoxSelection", paths),
+    inspectContextBox: (id) => invokeModel("ai:inspectContextBox", id),
+    editContextBox: (input) => invokeModel("ai:editContextBox", input),
+    switchContextBox: (input) => invokeModel("ai:switchContextBox", input),
+    listContextBoxes: () => invokeModel("ai:listContextBoxes"),
+    saveContextBox: (input) => invokeModel("ai:saveContextBox", input),
+    renameContextBox: (input) => invokeModel("ai:renameContextBox", input),
+    checkConversation: (id) => invokeModel("ai:checkConversation", id),
+    pullModel: (model) => invokeModel("ai:pullModel", model),
+    pullStatus: () => invokeModel("ai:pullStatus"),
+    cancelPull: (model) => invokeModel("ai:cancelPull", model),
+    onPull: (callback) => {
+      const listener = (_, value) => callback(value);
+      ipcRenderer.on("ai:pull", listener);
+      return () => ipcRenderer.removeListener("ai:pull", listener);
+    },
     handshake: (version) => ipcRenderer.invoke("ai:handshake", version),
     models: () => invokeModel("ai:models"),
     checkRemoteModel: (input) => invokeModel("ai:checkRemoteModel", input),

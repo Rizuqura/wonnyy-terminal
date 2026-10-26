@@ -16,6 +16,45 @@ const source = {
   content: "Target allocation is 25%.",
 };
 
+test("readable empty sources retain separate envelopes alongside real evidence; malformed content still fails", () => {
+  const empty = {
+    ...source,
+    sourceId: "empty.md",
+    relativePath: "empty.md",
+    content: "",
+  };
+  const prompt = buildContextMessages({
+    userMessage: "Summarize",
+    sources: [source, empty],
+  });
+  assert.deepEqual(
+    prompt.messages
+      .slice(1, 3)
+      .map((message) => JSON.parse(message.content).content),
+    [source.content, ""],
+  );
+  for (const content of [undefined, null, 0, {}, []])
+    assert.throws(
+      () =>
+        buildContextMessages({
+          userMessage: "Summarize",
+          source: { ...empty, content },
+        }),
+      (error) =>
+        error.code === "MODEL_INVALID_REQUEST" &&
+        error.details.field === "source.content",
+    );
+  for (const field of ["sourceId", "relativePath", "contentHash"])
+    assert.throws(
+      () =>
+        buildContextMessages({
+          userMessage: "Summarize",
+          source: { ...empty, [field]: "" },
+        }),
+      { code: "MODEL_INVALID_REQUEST" },
+    );
+});
+
 test("prompt builder creates deterministic system, untrusted source, and question boundaries", () => {
   const first = buildContextMessages({
     userMessage: " What is the target allocation? ",

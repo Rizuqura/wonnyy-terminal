@@ -24,7 +24,7 @@ function validId(id) {
 function validateConversation(value) {
   if (
     !value ||
-    value.schemaVersion !== 1 ||
+    ![1, 2, 3].includes(value.schemaVersion) ||
     !ID.test(value.id) ||
     typeof value.title !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
@@ -36,6 +36,21 @@ function validateConversation(value) {
     !Array.isArray(value.attempts)
   )
     throw new Error("Invalid conversation schema.");
+  if (
+    value.agentId !== undefined &&
+    (typeof value.agentId !== "string" || !ID.test(value.agentId))
+  )
+    throw new Error("Invalid agent binding.");
+  if (
+    value.schemaVersion >= 2 &&
+    (typeof value.contextBoxId !== "string" ||
+      !ID.test(value.contextBoxId) ||
+      typeof value.creationId !== "string" ||
+      !ID.test(value.creationId) ||
+      !Number.isInteger(value.contextBoxRevision) ||
+      value.contextBoxRevision < 1)
+  )
+    throw new Error("Invalid Context Box binding.");
   const source = value.contextIdentity.sources[0];
   validateContextIdentity(value.contextIdentity);
   if (
@@ -55,6 +70,8 @@ function validateConversation(value) {
       throw new Error("Invalid conversation message.");
   }
   for (const attempt of value.attempts) {
+    if (value.schemaVersion === 3)
+      validateContextIdentity(attempt.contextIdentity);
     if (
       !ID.test(attempt.requestId) ||
       !ID.test(attempt.runId) ||
@@ -80,24 +97,37 @@ function validateConversation(value) {
   for (const message of value.messages.filter(
     (item) => item.role === "assistant",
   )) {
+    if (value.schemaVersion === 3)
+      validateContextIdentity(message.contextIdentity);
     if (
       typeof message.model !== "string" ||
       (message.provider !== undefined &&
-        !["ollama", "gemini", "nvidia"].includes(message.provider)) ||
+        !["ollama", "gemini", "nvidia", "openrouter"].includes(
+          message.provider,
+        )) ||
       !value.attempts.some(
         (attempt) =>
           attempt.runId === message.runId &&
           attempt.status === "succeeded" &&
+          (value.schemaVersion !== 3 ||
+            attempt.contextIdentity.id === message.contextIdentity.id) &&
           attempt.userMessageId === message.userMessageId,
       ) ||
       JSON.stringify(message.sources) !==
-        JSON.stringify(value.contextIdentity.sources)
+        JSON.stringify(
+          (message.contextIdentity ?? value.contextIdentity).sources,
+        )
     )
       throw new Error(
         "Assistant message provenance does not match its conversation.",
       );
   }
-  return structuredClone(value);
+  // Legacy histories belong to the original agent. Normalize on read without
+  // rewriting files; a later explicit mutation persists this stable association.
+  return structuredClone({
+    ...value,
+    agentId: value.agentId ?? "wonnyy-agent",
+  });
 }
 
 function applyRun(conversation, attempt, record) {
@@ -118,6 +148,12 @@ function applyRun(conversation, attempt, record) {
       sources: record.sourcesActuallyRead,
       model: record.model,
       provider: record.provider,
+      ...(conversation.schemaVersion === 3
+        ? { contextIdentity: record.contextIdentity }
+        : {}),
+      ...(record.diagnostics?.contextBox
+        ? { contextBox: record.diagnostics.contextBox }
+        : {}),
     });
   }
 }
@@ -144,23 +180,42 @@ class ConversationStore {
   async write(value) {
     await writeJson(this.file(value.id), validateConversation(value));
   }
-  async list() {
-    await safeDirectory(this.directory);
-    const files = (await fs.readdir(this.directory)).filter((name) =>
-      name.endsWith(".json"),
-    );
-    const conversations = await Promise.all(
-      files.map((name) => this.read(name.slice(0, -5))),
-    );
-    return conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  list() {
+    return this.queue(async () => {
+      await safeDirectory(this.directory);
+      const files = (await fs.readdir(this.directory)).filter((name) =>
+        name.endsWith(".json"),
+      );
+      const conversations = await Promise.all(
+        files.map((name) => this.read(name.slice(0, -5))),
+      );
+      return conversations.sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      );
+    });
   }
-  create(contextIdentity) {
+  create(
+    contextIdentity,
+    box = null,
+    creationId = null,
+    agentId = "wonnyy-agent",
+  ) {
     return this.queue(async () => {
       const timestamp = new Date().toISOString();
       const value = {
-        schemaVersion: 1,
+        schemaVersion: box ? 3 : 1,
+        agentId: validId(agentId),
+        ...(box
+          ? {
+              contextBoxId: box.id,
+              contextBoxRevision: box.revision,
+              creationId,
+            }
+          : {}),
         id: randomUUID(),
-        title: path.basename(contextIdentity.sources[0].relativePath),
+        title: box
+          ? "Untitled chat"
+          : path.basename(contextIdentity.sources[0].relativePath),
         createdAt: timestamp,
         updatedAt: timestamp,
         contextIdentity,
@@ -200,7 +255,8 @@ class ConversationStore {
             const run = await this.readRun(attempt.runId);
             if (
               run.conversationId !== conversation.id ||
-              run.contextIdentity?.id !== conversation.contextIdentity.id
+              run.contextIdentity?.id !==
+                (attempt.contextIdentity ?? conversation.contextIdentity).id
             )
               throw new ModelRuntimeError(
                 "MODEL_STORAGE_INVALID",

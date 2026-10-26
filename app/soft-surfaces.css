@@ -1,0 +1,131 @@
+/* Shared surface treatment. Keep dimensions, graph markings and navigation
+   selection intact; decorative edges give way to fill and static hover depth. */
+.app-shell {
+  --surface-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  --hover-shadow: 0 4px 16px rgba(0, 0, 0, 0.24);
+  --focus-shadow:
+    0 0 14px rgba(130, 190, 180, 0.42), 0 4px 14px rgba(0, 0, 0, 0.2);
+  --line: transparent;
+  --line-soft: transparent;
+  --ui-line: transparent;
+  --p-border: transparent;
+}
+
+/* Retain native checked indicators and the Planet world's evidence/selection
+   markings. Transparent borders preserve existing hit areas and resize math. */
+.app-shell,
+.app-shell
+  :where(*):not(
+    :where(
+      .pworld,
+      .pworld *,
+      input[type="checkbox"],
+      input[type="radio"],
+      input[type="range"]
+    )
+  ) {
+  border-color: transparent !important;
+}
+
+.app-shell .nav-item.active {
+  border-bottom-color: var(--p-orange) !important;
+}
+
+.app-shell
+  :where(button, summary, a):where(
+    :hover:not(:disabled):not([aria-disabled="true"])
+  ) {
+  box-shadow: var(--hover-shadow) !important;
+}
+
+.app-shell
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    textarea,
+    select
+  ) {
+  background-color: #131e29 !important;
+  box-shadow: none;
+}
+
+.app-shell
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    textarea,
+    select
+  ):hover:not(:disabled) {
+  box-shadow: var(--hover-shadow) !important;
+}
+
+.app-shell
+  :where(
+    .ai-connect-card,
+    .ai-current,
+    .model-list article,
+    .agent-bot-row,
+    .agent-conversation-list article,
+    .context-manager-box-row,
+    .brain-scope,
+    .planet-usage,
+    .pmini
+  ):hover {
+  box-shadow: var(--hover-shadow) !important;
+}
+
+.app-shell :where(.chat-panel-floating, dialog[open]) {
+  box-shadow: var(--surface-shadow) !important;
+}
+
+.app-shell .chat-panel-floating:hover {
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* A soft, visible keyboard cue replaces the previous sharp focus rectangles. */
+.app-shell :focus-visible:not(.pnode) {
+  outline: none !important;
+  box-shadow: var(--focus-shadow) !important;
+}
+
+.app-shell
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    textarea,
+    select
+  ):focus-visible {
+  background-color: #1b2b36 !important;
+}
+
+.app-shell :is(.search-box, .ai-model-search) {
+  background-color: #131e29;
+}
+.app-shell :is(.search-box, .ai-model-search) input,
+.app-shell :is(.search-box, .ai-model-search) input:focus-visible {
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+.app-shell :is(.search-box, .ai-model-search):hover {
+  box-shadow: var(--hover-shadow) !important;
+}
+.app-shell :is(.search-box, .ai-model-search):focus-within {
+  box-shadow: var(--focus-shadow) !important;
+}
+
+.app-shell :where(button, input, textarea, select):disabled {
+  box-shadow: none !important;
+}
+
+.app-shell .metrics tbody tr:nth-child(even) {
+  background: #111a24;
+}
+
+/* Honor OS high-contrast preferences, where shadows may not be rendered. */
+@media (forced-colors: active) {
+  .app-shell :where(button, input, textarea, select, dialog) {
+    border-color: ButtonText !important;
+  }
+  .app-shell :focus-visible:not(.pnode) {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+    box-shadow: none !important;
+  }
+}

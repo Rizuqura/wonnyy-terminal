@@ -177,64 +177,20 @@ test("Gemini errors are actionable, bounded, and never expose provider bodies or
   }
 });
 
-test("Gemini retries transient rejection on the same model before streaming", async () => {
-  let calls = 0;
-  const provider = new GeminiProvider({
-    credentials,
-    fetchImpl: async (url) => {
-      assert.match(url, /models\/gemini-test:streamGenerateContent/);
-      return ++calls < 3
-        ? new Response("private provider body", { status: 503 })
-        : stream([chunk('{"answer":"Recovered"}', "STOP")]);
-    },
-  });
-  const result = await provider.complete(request());
-  assert.equal(result.content, '{"answer":"Recovered"}');
-  assert.equal(calls, 3);
-});
-
-test("Gemini bounds server retries and preserves cancellation and deadlines during backoff", async () => {
-  for (const mode of ["exhausted", "cancelled", "deadline"]) {
+test("Gemini transport never retries rejected requests", async () => {
+  for (const status of [429, 500, 502, 503, 504]) {
     let calls = 0;
-    const controller = new AbortController();
     const provider = new GeminiProvider({
       credentials,
       fetchImpl: async () => {
         calls++;
-        if (mode === "cancelled")
-          setTimeout(
-            () =>
-              controller.abort(
-                new ModelRuntimeError("MODEL_CANCELLED", "Stopped"),
-              ),
-            20,
-          );
-        return new Response("secret", { status: 503 });
+        return new Response("private body", { status });
       },
     });
-    await assert.rejects(
-      provider.request(
-        "models",
-        {},
-        async () => assert.fail("Rejected response consumed"),
-        {
-          signal: controller.signal,
-          absoluteMs: mode === "deadline" ? 20 : 10000,
-        },
-      ),
-      (error) => {
-        assert.equal(
-          error.code,
-          mode === "exhausted"
-            ? "REMOTE_SERVER_ERROR"
-            : mode === "cancelled"
-              ? "MODEL_CANCELLED"
-              : "REMOTE_TIMEOUT",
-        );
-        return true;
-      },
-    );
-    assert.equal(calls, mode === "exhausted" ? 3 : 1);
+    await assert.rejects(provider.complete(request()), {
+      code: status === 429 ? "RATE_LIMITED" : "REMOTE_SERVER_ERROR",
+    });
+    assert.equal(calls, 1);
   }
 });
 
@@ -334,4 +290,18 @@ test("Gemini fails before network access for missing credentials and invalid mod
     { code: "MODEL_INVALID_REQUEST" },
   );
   assert.equal(calls, 0);
+});
+
+test("statistics plans retain structured JSON through the provider", async () => {
+  const { STATISTICS_FORMAT } = require("../statistics.cjs");
+  const plan = { calculations: [], limitation: "Need input values." };
+  const provider = new GeminiProvider({
+    credentials,
+    fetchImpl: async () => stream([chunk(JSON.stringify(plan), "STOP")]),
+  });
+  const result = await provider.complete({
+    ...request(),
+    format: STATISTICS_FORMAT,
+  });
+  assert.deepEqual(JSON.parse(result.content), plan);
 });

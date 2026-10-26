@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type {
   AiBridge,
+  AgentConfig,
+  ModelRuntimeErrorValue,
+  ContextBox,
+  ContextBoxEdit,
+  ModelPullStatus,
   Conversation,
   ContextIdentity,
   ModelSettings,
@@ -19,11 +24,13 @@ type Options = {
   vaultPath: string | null;
   contextKey: string;
   scope: ScopeSelection;
-  unavailableReason: string | null;
   onKnowledgeChange: () => Promise<void>;
 };
 const errorState = (error: unknown): ChatState => {
   const code = (error as { code?: string })?.code;
+  if (code === "MODEL_CANCELLED") return "CANCELLED";
+  if (code === "MODEL_CONTEXT_TOO_LARGE") return "CONTEXT_TOO_LARGE";
+  if (code === "CONTEXT_INSUFFICIENT") return "CONTEXT_INSUFFICIENT";
   if (code === "MODEL_RESTART_REQUIRED") return "RESTART_REQUIRED";
   if (code === "MODEL_OFFLINE" || code === "PROVIDER_OFFLINE")
     return "MODEL_OFFLINE";
@@ -36,20 +43,43 @@ export function useChatRuntime({
   vaultPath,
   contextKey,
   scope,
-  unavailableReason,
   onKnowledgeChange,
 }: Options) {
   const [runtime, dispatch] = useReducer(runtimeReducer, initialRuntime);
+  const [contextBoxes, setContextBoxes] = useState<ContextBox[]>([]);
+  const [preselectedBoxId, setPreselectedBoxId] = useState("");
+  const [boxesVersion, setBoxesVersion] = useState(0);
+  const [openAgentVersion, setOpenAgentVersion] = useState(0);
+  const [creatingChat, setCreatingChat] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [pulls, setPulls] = useState<ModelPullStatus[]>([]);
   const [draft, setDraft] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [context, setContext] = useState<ContextIdentity | null>(null);
   const [registry, setRegistry] = useState<RegistryState | null>(null);
+  const [agent, setAgent] = useState<AgentConfig | null>(null);
+  const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [activeAgentId, setActiveAgentId] = useState("wonnyy-agent");
+  const [switchingAgent, setSwitchingAgent] = useState(false);
+  const switchingAgentRef = useRef(false);
+  const agentRef = useRef("wonnyy-agent");
+  const agentDrafts = useRef(new Map<string, string>());
   const [connected, setConnected] = useState(false);
+  const [startup, setStartup] = useState({
+    vaultPath,
+    progress: 0,
+    label: "Connecting desktop services",
+    error: null as string | null,
+  });
   const [working, setWorking] = useState(false);
   const bridge = useRef<AiBridge | null>(null);
   const session = useRef(0);
   const request = useRef<string | null>(null);
+  const eventError = useRef<{
+    requestId: string;
+    error: ModelRuntimeErrorValue;
+  } | null>(null);
   const selected = useRef<Conversation | null>(null);
   const chats = useRef<Conversation[]>([]);
   const scopeRef = useRef(scope);
@@ -81,23 +111,81 @@ export function useChatRuntime({
 
   useEffect(() => {
     const version = ++session.current;
+    setStartup({
+      vaultPath,
+      progress: 0,
+      label: "Connecting desktop services",
+      error: null,
+    });
     setConnected(false);
     setConversation(null);
+    setContextBoxes([]);
+    setPreselectedBoxId("");
+    setCreatingChat(false);
     setConversations([]);
     setContext(null);
     setDraft("");
+    setAgent(null);
+    setAgents([]);
+    agentDrafts.current.clear();
     dispatch({ type: "reset" });
+    let unsubscribePull: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
     void connectAi()
       .then(async (client) => {
         if (session.current !== version) return;
         bridge.current = client;
+        setStartup({
+          vaultPath,
+          progress: 25,
+          label: "Loading provider settings and chat history",
+          error: null,
+        });
+        const updatePull = (value: ModelPullStatus) => {
+          if (session.current !== version) return;
+          setPulls((current) => [
+            ...current.filter((p) => p.model !== value.model),
+            value,
+          ]);
+          if (value.phase === "model-installed")
+            void client
+              .models()
+              .then((models) => {
+                if (session.current === version) {
+                  setRegistry(models);
+                  if (!request.current)
+                    dispatch({ type: "reset", state: "READY" });
+                }
+              })
+              .catch(fail);
+        };
+        unsubscribePull = client.onPull(updatePull);
+        (await client.pullStatus()).forEach(updatePull);
+        if (session.current !== version) return;
         unsubscribe = client.onEvent((event) => {
           if (
             session.current !== version ||
             event.requestId !== request.current
           )
             return;
+          if (event.error)
+            eventError.current = {
+              requestId: event.requestId,
+              error: event.error,
+            };
+          // Bridge promise rejections may lose custom Error properties. The
+          // versioned runtime event retains the authoritative context error code.
+          if (
+            event.error &&
+            [
+              "MODEL_CONTEXT_INVALID",
+              "BRAIN_SOURCE_CHANGED",
+              "BRAIN_SOURCE_UNAVAILABLE",
+            ].includes(event.error.code)
+          ) {
+            setContext(null);
+            setContextError(event.error.message);
+          }
           dispatch({ type: "event", event });
           if (event.conversation) accept(event.conversation);
         });
@@ -108,17 +196,81 @@ export function useChatRuntime({
         if (session.current !== version) return;
         setRegistry(models);
         setConversations(list);
+        setStartup({
+          vaultPath,
+          progress: 60,
+          label: "Loading Context Boxes",
+          error: null,
+        });
+        setContextBoxes(vaultPath ? await client.listContextBoxes() : []);
+        if (session.current !== version) return;
+        let savedId: string | null = null;
+        try {
+          savedId = localStorage.getItem("qterminal-active-chat:" + vaultPath);
+        } catch {}
+        const profiles = await Promise.all([
+          client.getAgent("wonnyy-agent"),
+          client.getAgent("chronoz"),
+        ]);
+        if (session.current !== version) return;
+        setStartup({
+          vaultPath,
+          progress: 85,
+          label: "Restoring agents and workspace",
+          error: null,
+        });
+        let restoredAgent = list.find((c) => c.id === savedId)?.agentId;
+        try {
+          restoredAgent ??=
+            localStorage.getItem("qterminal-active-agent:" + vaultPath) ??
+            undefined;
+        } catch {}
+        const profile =
+          profiles.find((p) => p.id === restoredAgent) ?? profiles[0];
+        if (!savedId)
+          try {
+            savedId = localStorage.getItem(
+              `qterminal-active-chat:${vaultPath}:${profile.id}`,
+            );
+          } catch {}
+        setAgents(profiles);
+        setAgent(profile);
+        agentRef.current = profile.id;
+        setActiveAgentId(profile.id);
+        setConversation(
+          list.find((c) => c.id === savedId && c.agentId === profile.id) ??
+            null,
+        );
         chats.current = list;
         setConnected(true);
+        setStartup({
+          vaultPath,
+          progress: 100,
+          label: "Workspace ready",
+          error: null,
+        });
+        dispatch({ type: "reset", state: "READY" });
       })
       .catch((error) => {
-        if (session.current === version) fail(error);
+        if (session.current === version) {
+          setStartup({
+            vaultPath,
+            progress: 0,
+            label: "Startup needs attention",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Could not initialize chat services.",
+          });
+          fail(error);
+        }
       });
     return () => {
       session.current++;
       checksStopped.current = true;
       void bridge.current?.stopModelChecks().catch(() => {});
       unsubscribe?.();
+      unsubscribePull?.();
       if (request.current)
         void bridge.current?.cancel(request.current).catch(() => {});
       request.current = null;
@@ -128,40 +280,74 @@ export function useChatRuntime({
   useEffect(() => {
     if (!connected || !bridge.current) return;
     let stale = false;
-    const client = bridge.current;
     setContext(null);
-    void (async () => {
-      if (request.current) await client.cancel(request.current);
-      if (stale) return;
-      if (unavailableReason) {
-        dispatch({ type: "reset", state: "CONTEXT_NEEDED" });
-        return;
+    setContextError(null);
+    try {
+      localStorage.setItem(
+        "qterminal-active-agent:" + vaultPath,
+        activeAgentId,
+      );
+      if (conversation) {
+        localStorage.setItem(
+          "qterminal-active-chat:" + vaultPath,
+          conversation.id,
+        );
+        localStorage.setItem(
+          `qterminal-active-chat:${vaultPath}:${activeAgentId}`,
+          conversation.id,
+        );
+      } else {
+        localStorage.removeItem("qterminal-active-chat:" + vaultPath);
+        localStorage.removeItem(
+          `qterminal-active-chat:${vaultPath}:${activeAgentId}`,
+        );
       }
-      dispatch({ type: "reset", state: "PREPARING_CONTEXT" });
-      const identity = await client.context(scopeRef.current);
-      if (stale) return;
-      const current = selected.current;
-      const compatible =
-        current?.contextIdentity.id === identity.id
-          ? current
-          : !current
-            ? chats.current.find(
-                (item) => item.contextIdentity.id === identity.id,
-              )
-            : null;
-      const next =
-        compatible ?? (await client.createConversation(scopeRef.current));
-      if (stale) return;
-      setContext(identity);
-      accept(next);
-      dispatch({ type: "reset", state: "READY" });
-    })().catch((error) => {
-      if (!stale) fail(error);
-    });
+    } catch {}
+    if (!conversation) return;
+    if (!conversation.contextBoxId) {
+      setContextError(
+        "Legacy chat is read-only. Create a bound chat with a Context Box.",
+      );
+      return;
+    }
+    void bridge.current
+      .checkConversation(conversation.id)
+      .then(async (identity) => {
+        const box = await bridge.current!.inspectContextBox(
+          conversation.contextBoxId!,
+        );
+        if (!stale) {
+          if (
+            box.items.length &&
+            box.items.every(
+              (item) => item.status === "ready" && item.estimatedTokens === 0,
+            )
+          ) {
+            setContext(null);
+            setContextError(
+              "Insufficient evidence in the active Context Box. Its sources contain no readable text.",
+            );
+            return;
+          }
+          setContext(identity);
+          setContextError(null);
+        }
+      })
+      .catch((error) => {
+        if (!stale) setContextError(chatErrorMessage(error));
+      });
     return () => {
       stale = true;
     };
-  }, [connected, contextKey, unavailableReason, accept, fail]);
+  }, [
+    connected,
+    conversation?.id,
+    conversation?.contextBoxId,
+    contextKey,
+    vaultPath,
+    boxesVersion,
+    activeAgentId,
+  ]);
 
   const interruptChecks = useCallback(async () => {
     if (!scanActive.current) return;
@@ -186,8 +372,10 @@ export function useChatRuntime({
       setWorking(true);
       try {
         await operation(bridge.current, () => version === session.current);
+        return true;
       } catch (error) {
         if (version === session.current) fail(error);
+        return false;
       } finally {
         mutation.current = false;
         setWorking(false);
@@ -197,23 +385,32 @@ export function useChatRuntime({
     [fail, interruptChecks],
   );
 
-  const attached = Boolean(
-    context && conversation?.contextIdentity.id === context.id,
+  const requestError = useCallback(
+    (id: string) =>
+      eventError.current?.requestId === id ? eventError.current.error : null,
+    [],
   );
+  const attached = Boolean(context && conversation?.contextBoxId);
   const run = useCallback(
     async (text: string, retryOf?: string) => {
       await interruptChecks();
-      if (request.current || mutation.current || !text.trim()) return;
+      if (
+        request.current ||
+        mutation.current ||
+        pulls.some((p) => p.phase === "model-pulling") ||
+        !text.trim()
+      )
+        return;
       if (
         !bridge.current ||
         !conversation ||
         !context ||
         !attached ||
-        unavailableReason
+        contextError
       ) {
         fail(
           new Error(
-            unavailableReason ??
+            contextError ??
               "Resume this chat's approved source or start a new chat first.",
           ),
         );
@@ -223,6 +420,7 @@ export function useChatRuntime({
       const requestId = crypto.randomUUID();
       const version = session.current;
       request.current = requestId;
+      eventError.current = null;
       dispatch({ type: "start", requestId });
       setDraft("");
       try {
@@ -234,18 +432,52 @@ export function useChatRuntime({
           userMessage: text,
           ...(retryOf ? { retryOf } : {}),
         });
-        if (version === session.current) accept(result.conversation);
+        if (version === session.current) {
+          accept(result.conversation);
+          setContext(result.conversation.contextIdentity);
+        }
       } catch (error) {
         if (version === session.current) {
+          const terminalError = requestError(requestId);
+          if (terminalError)
+            error = Object.assign(
+              new Error(terminalError.message),
+              terminalError,
+            );
           fail(error);
+          const invalidContext = [
+            "MODEL_CONTEXT_INVALID",
+            "BRAIN_SOURCE_CHANGED",
+            "BRAIN_SOURCE_UNAVAILABLE",
+          ].includes((error as { code?: string }).code ?? "");
+          if (invalidContext) {
+            setContext(null);
+            setContextError(chatErrorMessage(error));
+          }
           setDraft((current) => current || text);
           try {
             const list = await client.listConversations();
             if (version === session.current) {
               setConversations(list);
-              setConversation(
-                list.find((item) => item.id === conversation.id) ?? null,
-              );
+              const restored =
+                list.find((item) => item.id === conversation.id) ?? null;
+              setConversation(restored);
+              // A failed/cancelled turn may already have recorded a newer file
+              // manifest. Keep retries attached to that persisted version.
+              if (restored && !invalidContext) {
+                // ContextBridge can drop custom Error properties, and terminal
+                // events may race promise rejection. Revalidate capabilities
+                // instead of restoring a stale saved manifest after failure.
+                try {
+                  const verified = await client.checkConversation(restored.id);
+                  if (version === session.current) setContext(verified);
+                } catch (contextFailure) {
+                  if (version === session.current) {
+                    setContext(null);
+                    setContextError(chatErrorMessage(contextFailure));
+                  }
+                }
+              }
             }
           } catch (loadError) {
             if (version === session.current) fail(loadError);
@@ -260,10 +492,12 @@ export function useChatRuntime({
       conversation,
       context,
       attached,
-      unavailableReason,
+      contextError,
+      requestError,
       accept,
       fail,
       interruptChecks,
+      pulls,
     ],
   );
 
@@ -288,18 +522,122 @@ export function useChatRuntime({
     );
     if (message) void run(message.content, latest.requestId);
   };
-  const newChat = () =>
+  const newChat = () => {
+    setCreatingChat(true);
     void operate(async (client, current) => {
-      if (unavailableReason) throw new Error(unavailableReason);
-      const value = await client.createConversation(scopeRef.current);
+      const boxes = await client.listContextBoxes();
+      const reviewed = await Promise.all(
+        boxes.map((box) => client.inspectContextBox(box.id).catch(() => box)),
+      );
+      if (current()) setContextBoxes(reviewed);
+    });
+  };
+  const createChat = (contextBoxId: string, creationId: string) =>
+    operate(async (client, current) => {
+      const value = await client.createConversation({
+        agentId: agentRef.current,
+        contextBoxId,
+        creationId,
+      });
       if (!current()) return;
+      setContext(value.contextIdentity);
+      setContextError(null);
       accept(value);
+      setCreatingChat(false);
+      setDraft("");
       dispatch({ type: "reset", state: "READY" });
     });
+  const saveContextBox = (name: string) =>
+    operate(async (client, current) => {
+      await client.saveContextBox({ name });
+      const boxes = await client.listContextBoxes();
+      if (current()) setContextBoxes(boxes);
+    });
+  const renameContextBox = (id: string, name: string) =>
+    operate(async (client, current) => {
+      await client.renameContextBox({ id, name });
+      const boxes = await client.listContextBoxes();
+      if (current()) {
+        setContextBoxes(boxes);
+        dispatch({ type: "reset", state: "READY" });
+      }
+    });
+  const editContextBox = (input: ContextBoxEdit) =>
+    operate(async (client, current) => {
+      await client.editContextBox(input);
+      const boxes = await client.listContextBoxes();
+      if (current()) {
+        setContextBoxes(boxes);
+        if (input.action === "delete" && input.id === preselectedBoxId)
+          setPreselectedBoxId("");
+        setBoxesVersion((v) => v + 1);
+        dispatch({ type: "reset", state: "READY" });
+      }
+    });
+  const switchContextBox = (contextBoxId: string) =>
+    operate(async (client, current) => {
+      if (!conversation) return;
+      const value = await client.switchContextBox({
+        conversationId: conversation.id,
+        contextBoxId,
+      });
+      if (current()) {
+        accept(value);
+        setContext(value.contextIdentity);
+        setContextError(null);
+        setBoxesVersion((v) => v + 1);
+        dispatch({ type: "reset", state: "READY" });
+      }
+    });
+  const selectAgent = (id: string, chatId?: string) => {
+    if (
+      switchingAgentRef.current ||
+      request.current ||
+      mutation.current ||
+      !agents.some((profile) => profile.id === id)
+    )
+      return Promise.resolve(false);
+    switchingAgentRef.current = true;
+    setSwitchingAgent(true);
+    return operate(async (client, current) => {
+      const profile = await client.getAgent(id);
+      if (!current()) return;
+      if (agentRef.current !== id)
+        agentDrafts.current.set(agentRef.current, draft);
+      let savedId = chatId;
+      if (!savedId)
+        try {
+          savedId =
+            localStorage.getItem(`qterminal-active-chat:${vaultPath}:${id}`) ??
+            undefined;
+        } catch {}
+      const next =
+        conversations.find((c) => c.id === savedId && c.agentId === id) ??
+        conversations.find((c) => c.agentId === id) ??
+        null;
+      setAgent(profile);
+      setAgents((profiles) => profiles.map((p) => (p.id === id ? profile : p)));
+      agentRef.current = id;
+      setActiveAgentId(id);
+      setConversation(next);
+      setCreatingChat(false);
+      setContext(null);
+      setContextError(null);
+      setDraft(agentDrafts.current.get(id) ?? "");
+      dispatch({ type: "reset", state: "READY" });
+    }).finally(() => {
+      switchingAgentRef.current = false;
+      setSwitchingAgent(false);
+    });
+  };
   const selectChat = (id: string) => {
     if (request.current || mutation.current) return;
     const value = conversations.find((item) => item.id === id);
     if (value) {
+      if (value.agentId !== agentRef.current) {
+        void selectAgent(value.agentId ?? "wonnyy-agent", id);
+        return;
+      }
       setConversation(value);
       dispatch({ type: "reset", state: "READY" });
     }
@@ -308,9 +646,10 @@ export function useChatRuntime({
     void operate(async (client, current) => {
       if (!conversation) return;
       const value = await client.resumeConversation(conversation.id);
+      const identity = await client.checkConversation(conversation.id);
       if (!current()) return;
       accept(value);
-      setContext(value.contextIdentity);
+      setContext(identity);
       await onKnowledgeChange();
     });
   const refreshSource = () =>
@@ -319,25 +658,34 @@ export function useChatRuntime({
       if (!current()) return;
       await onKnowledgeChange();
     });
-  const rename = (title: string) =>
-    void operate(async (client, current) => {
-      if (conversation) {
+  const rename = (title: string, id = conversation?.id) =>
+    operate(async (client, current) => {
+      if (id) {
         const value = await client.renameConversation({
-          conversationId: conversation.id,
+          conversationId: id,
           title,
         });
-        if (current()) accept(value);
+        if (current()) {
+          setConversations((list) =>
+            list.map((c) => (c.id === id ? value : c)),
+          );
+          if (selected.current?.id === id) accept(value);
+        }
       }
     });
-  const remove = (all: boolean) =>
+  const remove = (all: boolean, id = conversation?.id) =>
     void operate(async (client, current) => {
-      if (all) await client.clearConversations();
-      else if (conversation) await client.deleteConversation(conversation.id);
+      if (all) {
+        for (const item of conversations.filter(
+          (c) => c.agentId === agentRef.current,
+        ))
+          await client.deleteConversation(item.id);
+      } else if (id) await client.deleteConversation(id);
       if (!current()) return;
       const list = await client.listConversations();
       if (!current()) return;
       setConversations(list);
-      setConversation(null);
+      if (all || selected.current?.id === id) setConversation(null);
       dispatch({ type: "reset", state: "READY" });
     });
   const refreshModels = () =>
@@ -362,14 +710,14 @@ export function useChatRuntime({
     Record<string, ModelCheckResult>
   >({});
   const [modelScan, setModelScan] = useState<{
-    providerId: "gemini" | "nvidia";
+    providerId: "gemini" | "nvidia" | "openrouter";
     running: boolean;
     completed: number;
     total: number;
     model: string | null;
     note: string;
   } | null>(null);
-  const clearChecks = (providerId: "gemini" | "nvidia") =>
+  const clearChecks = (providerId: "gemini" | "nvidia" | "openrouter") =>
     setModelChecks((checks) =>
       Object.fromEntries(
         Object.entries(checks).filter(
@@ -380,7 +728,7 @@ export function useChatRuntime({
   const scanModels = async (
     client: AiBridge,
     current: () => boolean,
-    providerId: "gemini" | "nvidia",
+    providerId: "gemini" | "nvidia" | "openrouter",
     models: string[],
     clear = true,
   ) => {
@@ -451,7 +799,7 @@ export function useChatRuntime({
     );
     void bridge.current?.stopModelChecks().catch(fail);
   };
-  const recheckModels = (providerId: "gemini" | "nvidia") =>
+  const recheckModels = (providerId: "gemini" | "nvidia" | "openrouter") =>
     operate(async (client, current) => {
       checkedLoadedKeys.current.add(providerId);
       const value = await client.models();
@@ -466,33 +814,73 @@ export function useChatRuntime({
           .map((m) => m.modelId),
       );
     });
-  const checkModel = (providerId: "gemini" | "nvidia", model: string) =>
+  const checkModel = (
+    providerId: "gemini" | "nvidia" | "openrouter",
+    model: string,
+  ) =>
     operate((client, current) =>
       scanModels(client, current, providerId, [model], false),
     );
   const saveCredential = (
     apiKey: string,
-    providerId: "gemini" | "nvidia" = "gemini",
+    providerId: "gemini" | "nvidia" | "openrouter" = "gemini",
+    onSaved?: () => void,
   ) =>
     operate(async (client, current) => {
       await client.saveCredential({ providerId, apiKey });
       checkedLoadedKeys.current.add(providerId);
       if (!current()) return;
+      onSaved?.();
       clearChecks(providerId);
-      const value = await client.models();
+      // Saving is a local, committed action. Model discovery is a separate
+      // network operation and must not make a saved credential look unsaved.
+      setRegistry(
+        (previous) =>
+          previous && {
+            ...previous,
+            online:
+              previous.settings.providerId === providerId
+                ? false
+                : previous.online,
+            providers: previous.providers.map((provider) =>
+              provider.id === providerId
+                ? {
+                    ...provider,
+                    configured: true,
+                    secureStorageAvailable: true,
+                    online: false,
+                    error: null,
+                  }
+                : provider,
+            ),
+            models: previous.models.filter(
+              (model) => model.providerId !== providerId,
+            ),
+          },
+      );
+      let value: RegistryState;
+      try {
+        value = await client.models();
+      } catch (error) {
+        if (current()) fail(error);
+        return;
+      }
       if (!current()) return;
       setRegistry(value);
       dispatch({ type: "reset", state: "READY" });
-      await scanModels(
-        client,
-        current,
-        providerId,
-        value.models
-          .filter((m) => m.providerId === providerId)
-          .map((m) => m.modelId),
-      );
+      if (providerId !== "openrouter")
+        await scanModels(
+          client,
+          current,
+          providerId,
+          value.models
+            .filter((m) => m.providerId === providerId)
+            .map((m) => m.modelId),
+        );
     });
-  const removeCredential = (providerId: "gemini" | "nvidia" = "gemini") =>
+  const removeCredential = (
+    providerId: "gemini" | "nvidia" | "openrouter" = "gemini",
+  ) =>
     operate(async (client, current) => {
       await client.removeCredential({ providerId });
       checkedLoadedKeys.current.delete(providerId);
@@ -520,6 +908,7 @@ export function useChatRuntime({
     const provider = registry.providers.find(
       (p) =>
         p.id !== "ollama" &&
+        p.id !== "openrouter" &&
         p.configured &&
         p.online &&
         !checkedLoadedKeys.current.has(p.id),
@@ -552,6 +941,18 @@ export function useChatRuntime({
         : runtime.state;
 
   return {
+    startup,
+    pulls,
+    downloadModel: async (model: string) => {
+      try {
+        await interruptChecks();
+        if (bridge.current) await bridge.current.pullModel(model);
+      } catch (error) {
+        fail(error);
+      }
+    },
+    cancelPull: (model: string) =>
+      void bridge.current?.cancelPull(model).catch(fail),
     runtime: { ...runtime, state: status as ChatState },
     draft,
     setDraft,
@@ -559,9 +960,69 @@ export function useChatRuntime({
     conversations,
     context,
     registry,
+    agent,
+    agents,
+    activeAgentId,
+    selectAgent,
+    chooseAgentAvatar: async () => {
+      if (!bridge.current)
+        throw new Error("Desktop connection is unavailable.");
+      return bridge.current.chooseAgentAvatar();
+    },
+    saveAgent: async (
+      customInstructions: string,
+      avatarDataUrl?: string | null,
+    ) => {
+      if (!bridge.current)
+        throw new Error("Desktop connection is unavailable.");
+      const value = await bridge.current.saveAgent({
+        id: agentRef.current,
+        customInstructions,
+        ...(avatarDataUrl !== undefined ? { avatarDataUrl } : {}),
+      });
+      if (agentRef.current === value.id) setAgent(value);
+      setAgents((profiles) =>
+        profiles.map((p) => (p.id === value.id ? value : p)),
+      );
+      return value;
+    },
     attached,
-    busy: Boolean(runtime.requestId) || (working && !modelScan?.running),
-    unavailableReason,
+    busy:
+      !connected ||
+      switchingAgent ||
+      Boolean(runtime.requestId) ||
+      (working && !modelScan?.running),
+    unavailableReason: contextError,
+    contextBoxes,
+    preselectedBoxId,
+    openAgentVersion,
+    preselectBox: (id: string) => {
+      setPreselectedBoxId(id);
+      setOpenAgentVersion((v) => v + 1);
+    },
+    previewBoxSelection: async (paths: string[]) => {
+      if (!bridge.current)
+        throw new Error("Desktop connection is unavailable.");
+      return bridge.current.previewBoxSelection(paths);
+    },
+    inspectContextBox: async (id: string) => {
+      if (!bridge.current)
+        throw new Error("Desktop connection is unavailable.");
+      return bridge.current.inspectContextBox(id);
+    },
+    editContextBox,
+    switchContextBox,
+    creatingChat,
+    createChat,
+    saveContextBox,
+    renameContextBox,
+    cancelCreation: () => setCreatingChat(false),
+    canSend:
+      !!agent &&
+      attached &&
+      !contextError &&
+      !!selectedModelAvailable &&
+      !!registry?.online,
     submit: () => void run(draft),
     retry,
     stop,

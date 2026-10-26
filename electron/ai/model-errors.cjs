@@ -1,5 +1,7 @@
 const MODEL_ERROR_CODES = Object.freeze({
   INVALID_REQUEST: "MODEL_INVALID_REQUEST",
+  CONTEXT_INSUFFICIENT: "CONTEXT_INSUFFICIENT",
+  PULL_FAILED: "MODEL_PULL_FAILED",
   CONTEXT_INVALID: "MODEL_CONTEXT_INVALID",
   CONTEXT_TOO_LARGE: "MODEL_CONTEXT_TOO_LARGE",
   RUN_RECORD_INVALID: "MODEL_RUN_RECORD_INVALID",
@@ -49,9 +51,7 @@ function serializeModelError(error) {
   return {
     code: MODEL_ERROR_CODES.INTERNAL,
     message:
-      error instanceof Error
-        ? error.message
-        : "An unexpected model runtime error occurred.",
+      "An unexpected model runtime error occurred. Check the desktop logs for details.",
     details: {},
   };
 }

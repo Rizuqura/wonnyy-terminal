@@ -66,6 +66,7 @@ class ModelRegistry {
         pricingClass: "unknown",
         capabilities: model.capabilities,
         contextLength: model.contextLength,
+        outputLimit: model.outputLimit,
         warnings:
           status.id === "ollama" && model.size > 4_500_000_000
             ? ["High memory use on an 8 GB device."]
@@ -97,9 +98,11 @@ class ModelRegistry {
           displayName:
             id === "ollama"
               ? "Ollama"
-              : id === "nvidia"
-                ? "NVIDIA NIM"
-                : "Gemini",
+              : id === "openrouter"
+                ? "OpenRouter"
+                : id === "nvidia"
+                  ? "NVIDIA NIM"
+                  : "Gemini",
           location: id === "ollama" ? "local" : "remote",
           online,
           error: error ?? null,
@@ -136,7 +139,7 @@ class ModelRegistry {
     if (!settings.modelId)
       throw new ModelRuntimeError(
         "MODEL_NOT_FOUND",
-        "Select an available model in AI Terminal.",
+        "Select an available model in Settings.",
       );
     const provider = this.providerFor(settings.providerId);
     const models = await provider.listModels(options);
@@ -146,7 +149,7 @@ class ModelRegistry {
         settings.providerId !== "ollama"
           ? "MODEL_UNAVAILABLE"
           : "MODEL_NOT_FOUND",
-        `The selected model ${settings.modelId} is unavailable. Refresh Models in AI Terminal.`,
+        `The selected model ${settings.modelId} is unavailable. Refresh Models in Settings.`,
       );
     const details =
       typeof provider.describeModel === "function"

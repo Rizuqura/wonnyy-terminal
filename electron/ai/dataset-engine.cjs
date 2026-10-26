@@ -325,16 +325,25 @@ function query(dataset, input) {
     const metrics = array(input.metrics ?? [], 8, "metrics").map((m) => {
       keys(m, ["op", "column", "as"], "metric");
       if (
-        !["count", "sum", "average", "min", "max"].includes(m.op) ||
+        ![
+          "count",
+          "sum",
+          "average",
+          "mean",
+          "geometric_mean",
+          "min",
+          "max",
+        ].includes(m.op) ||
         typeof m.as !== "string" ||
         !m.as ||
         m.as.length > 80
       )
         fail(
-          "Metrics require count/sum/average/min/max and a unique 'as' name.",
+          "Metrics require count/sum/average/mean/geometric_mean/min/max and a unique 'as' name.",
         );
       return {
         ...m,
+        op: m.op === "mean" ? "average" : m.op,
         index: m.op === "count" && !m.column ? -1 : column(m.column),
       };
     });
@@ -400,6 +409,14 @@ function query(dataset, input) {
           fail(
             `Cannot calculate ${m.op}: record ${row.record}, column ${m.column} is not an unambiguous number.`,
           );
+        if (m.op === "geometric_mean") {
+          if (value < 0)
+            fail(
+              `Geometric mean requires non-negative values: record ${row.record}, column ${m.column}.`,
+            );
+          s.zero ||= value === 0;
+          if (value > 0) s.logSum = (s.logSum ?? 0) + Math.log(value);
+        }
         if (["sum", "average"].includes(m.op)) {
           s.sum += value;
           if (
@@ -423,7 +440,11 @@ function query(dataset, input) {
               ? null
               : m.op === "average"
                 ? s.sum / s.count
-                : s[m.op];
+                : m.op === "geometric_mean"
+                  ? s.zero
+                    ? 0
+                    : Math.exp(s.logSum / s.count)
+                  : s[m.op];
         }),
       ],
       missingByMetric: Object.fromEntries(
@@ -432,6 +453,8 @@ function query(dataset, input) {
     }));
     provenance.groupBy = groupSpecs;
     provenance.metrics = input.metrics;
+    provenance.metricConventions =
+      "average/mean = sum of non-missing values / their count. geometric_mean = exp(mean(log(x))); zero yields zero; negative values are rejected; all missing yields null. Geometric mean of raw percentages is not compounded growth.";
     if (input.growth) {
       keys(input.growth, ["periodColumn", "metric", "from", "to"], "growth");
       const g = input.growth,
@@ -493,7 +516,7 @@ function query(dataset, input) {
       });
       provenance.growth = g;
       provenance.growthConvention =
-        "(to-from)/from*100; absent periods or zero baseline yield null, never zero.";
+        "change (delta) = to-from; percentChange = (to-from)/from*100. Absent periods yield null; a zero baseline makes percentChange null but change remains defined.";
     }
   }
   const sorting = array(input.sort ?? [], 4, "sort").map((s) => {

@@ -6,20 +6,21 @@ import { DocumentWorkspace } from "./document-workspace";
 import { ResizableChat } from "./resizable-chat";
 import { ChatPanel, type ChatPanelProps } from "./chat-panel";
 import { PlanetScene } from "./planet-scene";
+import { findPlanetSearchTarget } from "../lib/planet-navigation";
 import { PlanetDetails } from "./planet-details";
 import { KnowledgeSidebar } from "./knowledge-sidebar";
 import { StatusBar } from "./status-bar";
 import { TopBar } from "./top-bar";
+import { StartupProgress } from "./startup-progress";
 import { StationPanel } from "./station-panel";
+import { contextBoxStations } from "../lib/context-box-stations";
 import { buildGraphFromVault } from "../lib/planet-vault";
 import {
   stationProjection,
   type StationMatchMode,
 } from "../lib/station-projection";
-import { getChatUnavailableReason } from "../features/chat/context-readiness";
 import type {
   BrainScope,
-  ContextPackage,
   StationState,
   VaultEntry,
   VaultFile,
@@ -28,11 +29,15 @@ import type {
   VaultSearchResult,
 } from "../types/electron";
 
+import { ContextBoxManager } from "../features/context-boxes/context-box-manager";
+import { ContextBoxes } from "../features/context-boxes/context-boxes";
 import { useChatRuntime } from "../features/chat/use-chat-runtime";
 import { ModelSettings } from "../features/model-settings/model-settings";
+import { AgentWorkspace } from "../features/agent/agent-workspace";
+import { AgentSettings } from "../features/agent/agent-settings";
 import { useConfirmation } from "../features/dialogs/use-confirmation";
 
-type View = "workspace" | "planet";
+type View = "workspace" | "planet" | "agent";
 
 function requireVaultBridge() {
   const vault = window.wonnyyDesktop?.vault;
@@ -44,7 +49,7 @@ function requireVaultBridge() {
     !vault.search
   ) {
     throw new Error(
-      "The Wonnyy desktop bridge is outdated. Stop the running app and restart npm run dev.",
+      "The QTerminal desktop bridge is outdated. Stop the running app and restart npm run dev.",
     );
   }
   return vault;
@@ -58,12 +63,13 @@ function requireKnowledgeBridge() {
     !desktop.ai?.chat
   )
     throw new Error(
-      "The Wonnyy desktop bridge is outdated. Stop the app and restart npm run dev.",
+      "The QTerminal desktop bridge is outdated. Stop the app and restart npm run dev.",
     );
   return desktop;
 }
 
 export function AppShell() {
+  const [startupDismissed, setStartupDismissed] = useState(false);
   const { confirm, confirmation } = useConfirmation();
   const [snapshot, setSnapshot] = useState<VaultSnapshot | null>(null);
   const [isScanning, setIsScanning] = useState(true);
@@ -74,15 +80,34 @@ export function AppShell() {
   );
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [view, setView] = useState<View>("planet");
+  const [planetFocus, setPlanetFocus] = useState(false);
+  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
+  const [contextLibraryRequest, setContextLibraryRequest] = useState<{
+    vaultPath: string;
+    nonce: number;
+  } | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useState(193);
-  const [chatWidth, setChatWidth] = useState(320);
+  const [vaultQuery, setVaultQuery] = useState("");
+  const [boxDetailsRequest, setBoxDetailsRequest] = useState<{
+    id: string;
+    nonce: number;
+    vaultPath: string;
+  } | null>(null);
+  const [planetNavigation, setPlanetNavigation] = useState<{
+    id: string;
+  } | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [vaultMinimized, setVaultMinimized] = useState(false);
+  const [chatWidth, setChatWidth] = useState(400);
   const [pdfSearchResults, setPdfSearchResults] = useState<VaultSearchResult[]>(
     [],
   );
   const [isSearchingPdf, setIsSearchingPdf] = useState(false);
   const [stationState, setStationState] = useState<StationState | null>(null);
   const [activeStationIds, setActiveStationIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [activeContextBoxIds, setActiveContextBoxIds] = useState<Set<string>>(
     new Set(),
   );
   const [stationMatchMode, setStationMatchMode] =
@@ -92,9 +117,7 @@ export function AppShell() {
   const [brainScope, setBrainScope] = useState<BrainScope | null>(null);
   const [brainScopeError, setBrainScopeError] = useState<string | null>(null);
   const [brainScopeBusy, setBrainScopeBusy] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState<"ai" | "general" | null>(
-    null,
-  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const brainScopeOwnerId = useRef<string | null>(null);
   const sidebarResizeStart = useRef<{ x: number; width: number } | null>(null);
   const vaultLoadVersion = useRef(0);
@@ -102,19 +125,6 @@ export function AppShell() {
   const graph = useMemo(
     () => (snapshot ? buildGraphFromVault(snapshot) : null),
     [snapshot],
-  );
-  const projection = useMemo(
-    () =>
-      graph
-        ? stationProjection(
-            graph,
-            stationState?.stations ?? [],
-            stationState?.assignments ?? [],
-            activeStationIds,
-            stationMatchMode,
-          )
-        : null,
-    [graph, stationState, activeStationIds, stationMatchMode],
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const primarySelectedId = selectedIds.at(-1) ?? null;
@@ -130,16 +140,6 @@ export function AppShell() {
           .map((entry) => entry.relativePath) ?? [],
       ),
     [stationState],
-  );
-  const chatUnavailableReason = useMemo(
-    () =>
-      getChatUnavailableReason({
-        vaultStatus: snapshot?.status ?? null,
-        brainScope,
-        brainScopeBusy,
-        brainScopeError,
-      }),
-    [brainScope, brainScopeBusy, brainScopeError, snapshot?.status],
   );
 
   useEffect(() => {
@@ -213,6 +213,7 @@ export function AppShell() {
   );
 
   const applySnapshot = useCallback((next: VaultSnapshot) => {
+    setPlanetNavigation(null);
     setSnapshot(next);
     setSelectedIds([]);
     setOpenedFile(null);
@@ -225,6 +226,7 @@ export function AppShell() {
   const rescanVault = useCallback(async () => {
     const version = ++vaultLoadVersion.current;
     setIsScanning(true);
+    setVaultError(null);
     try {
       const next = await requireVaultBridge().rescan();
       if (version !== vaultLoadVersion.current) return;
@@ -235,7 +237,7 @@ export function AppShell() {
       setVaultError(
         error instanceof Error
           ? error.message
-          : "Wonnyy could not scan the active vault.",
+          : "QTerminal could not scan the active vault.",
       );
     } finally {
       if (version === vaultLoadVersion.current) setIsScanning(false);
@@ -257,14 +259,17 @@ export function AppShell() {
       const next = selected ?? (await bridge.getSnapshot());
       if (version !== vaultLoadVersion.current) return;
       applySnapshot(next);
-      if (selected) setActiveStationIds(new Set());
+      if (selected) {
+        setActiveStationIds(new Set());
+        setActiveContextBoxIds(new Set());
+      }
       await loadStationState(version);
     } catch (error) {
       if (version !== vaultLoadVersion.current) return;
       setVaultError(
         error instanceof Error
           ? error.message
-          : "Wonnyy could not change the active vault.",
+          : "QTerminal could not change the active vault.",
       );
     } finally {
       if (version === vaultLoadVersion.current) setIsScanning(false);
@@ -338,12 +343,36 @@ export function AppShell() {
     });
   }, []);
 
+  const navigateToSearchResult = useCallback((id: string) => {
+    setFocusId(null);
+    setActiveStationIds((current) => (current.size ? new Set() : current));
+    setActiveContextBoxIds((current) => (current.size ? new Set() : current));
+    setSelectedIds([id]);
+    setPlanetNavigation({ id });
+  }, []);
+
+  useEffect(() => {
+    if (view !== "planet" || !graph || !vaultQuery.trim()) return;
+    const timer = window.setTimeout(() => {
+      const id = findPlanetSearchTarget(
+        graph.nodes.filter((node) => node.id !== graph.rootId),
+        vaultQuery,
+      );
+      if (id) navigateToSearchResult(id);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [graph, vaultQuery, view, navigateToSearchResult]);
+
   const selectExplorerEntry = useCallback(
     (entry: VaultEntry, additive: boolean) => {
       selectEntry(entry.relativePath, additive);
+      if (view === "planet" && vaultQuery.trim() && !additive) {
+        navigateToSearchResult(entry.relativePath);
+        return;
+      }
       if (entry.kind === "folder" && !additive) setFocusId(entry.relativePath);
     },
-    [selectEntry],
+    [selectEntry, view, vaultQuery, navigateToSearchResult],
   );
 
   const openVaultFile = useCallback(async (relativePath: string) => {
@@ -361,7 +390,7 @@ export function AppShell() {
       setWorkspaceError(
         error instanceof Error
           ? error.message
-          : "Wonnyy could not open this file.",
+          : "QTerminal could not open this file.",
       );
       setView("workspace");
     }
@@ -406,11 +435,81 @@ export function AppShell() {
       activeStationIds: [...activeStationIds],
       matchMode: stationMatchMode,
     },
-    unavailableReason: chatUnavailableReason,
     onKnowledgeChange: loadStationState,
   });
+  const startupVaultPath =
+    snapshot?.status === "ready" ? snapshot.rootPath : null;
+  const startupMatchesVault = chat.startup.vaultPath === startupVaultPath;
+  const startupReady =
+    !isScanning &&
+    !vaultError &&
+    !stationError &&
+    startupMatchesVault &&
+    chat.startup.progress === 100;
+  useEffect(() => {
+    if (startupReady) setStartupDismissed(true);
+  }, [startupReady]);
+  const startupError =
+    vaultError ??
+    stationError ??
+    (startupMatchesVault ? chat.startup.error : null);
+  const startupProgress = isScanning
+    ? snapshot
+      ? 25
+      : 10
+    : startupMatchesVault
+      ? 30 + Math.round(chat.startup.progress * 0.7)
+      : 30;
+  const projection = useMemo(() => {
+    if (!graph) return null;
+    const collections = contextBoxStations(
+      stationState?.stations ?? [],
+      stationState?.assignments ?? [],
+      chat.contextBoxes,
+      activeStationIds,
+      activeContextBoxIds,
+      new Set(graph.byId.keys()),
+    );
+    return stationProjection(
+      graph,
+      collections.stations,
+      collections.assignments,
+      collections.activeIds,
+      stationMatchMode,
+    );
+  }, [
+    graph,
+    stationState,
+    chat.contextBoxes,
+    activeStationIds,
+    activeContextBoxIds,
+    stationMatchMode,
+  ]);
+  useEffect(() => {
+    const validIds = new Set(chat.contextBoxes.map((box) => box.id));
+    setActiveContextBoxIds((current) => {
+      const next = new Set([...current].filter((id) => validIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [chat.contextBoxes]);
   const chatProps: Omit<ChatPanelProps, "variant"> = {
+    onOpenAgentSettings: () => setAgentSettingsOpen(true),
+    onOpenAgentWorkspace: () => {
+      setSettingsOpen(false);
+      setView("agent");
+    },
     controller: chat,
+    onExpandContext: () => {
+      setPlanetFocus(false);
+      setSettingsOpen(false);
+      setView("planet");
+      if (chat.conversation?.contextBoxId && snapshot?.rootPath)
+        setBoxDetailsRequest({
+          id: chat.conversation.contextBoxId,
+          nonce: Date.now(),
+          vaultPath: snapshot.rootPath,
+        });
+    },
     onOpenSource: (relativePath) => {
       void openVaultFile(relativePath);
     },
@@ -418,7 +517,9 @@ export function AppShell() {
 
   const startSidebarResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
       event.preventDefault();
+      event.currentTarget.focus();
       sidebarResizeStart.current = { x: event.clientX, width: sidebarWidth };
       event.currentTarget.setPointerCapture(event.pointerId);
     },
@@ -452,228 +553,454 @@ export function AppShell() {
   );
 
   const vaultSidebar = (
-    <div className="sidebar-slot">
-      <KnowledgeSidebar
-        snapshot={snapshot}
-        isScanning={isScanning}
-        error={vaultError}
-        selectedIds={selectedSet}
-        pdfSearchResults={pdfSearchResults}
-        isSearchingPdf={isSearchingPdf}
-        onSearchPdf={searchPdfText}
-        onRescan={() => void rescanVault()}
-        onChangeVault={() => void changeVault()}
-        onSelect={selectExplorerEntry}
-        onOpen={(entry) => void openVaultFile(entry.relativePath)}
-        onOpenSearchResult={(relativePath) => void openVaultFile(relativePath)}
-      />
+    <div
+      className={`sidebar-slot${vaultMinimized ? " sidebar-minimized" : ""}`}
+    >
+      <button
+        className="vault-window-toggle"
+        aria-label={
+          vaultMinimized
+            ? "Restore knowledge vault"
+            : "Minimize knowledge vault"
+        }
+        aria-expanded={!vaultMinimized}
+        aria-controls="knowledge-vault-content"
+        title={
+          vaultMinimized
+            ? "Restore knowledge vault"
+            : "Minimize knowledge vault"
+        }
+        onClick={() => setVaultMinimized((value) => !value)}
+      >
+        {vaultMinimized ? "›" : "−"}
+      </button>
+      {vaultMinimized && (
+        <span className="vault-minimized-label" aria-hidden="true">
+          KNOWLEDGE VAULT
+        </span>
+      )}
       <div
-        className="sidebar-resize-handle"
-        role="separator"
-        aria-label="Resize knowledge vault"
-        aria-orientation="vertical"
-        onPointerDown={startSidebarResize}
-        onPointerMove={resizeSidebar}
-        onPointerUp={stopSidebarResize}
-        onPointerCancel={stopSidebarResize}
-      />
+        id="knowledge-vault-content"
+        className="vault-sidebar-content"
+        hidden={vaultMinimized}
+      >
+        <KnowledgeSidebar
+          snapshot={snapshot}
+          isScanning={isScanning}
+          error={vaultError}
+          selectedIds={selectedSet}
+          pdfSearchResults={pdfSearchResults}
+          isSearchingPdf={isSearchingPdf}
+          onSearchPdf={searchPdfText}
+          onQueryChange={setVaultQuery}
+          query={vaultQuery}
+          onRescan={() => void rescanVault()}
+          onChangeVault={() => void changeVault()}
+          onSelect={selectExplorerEntry}
+          onOpen={(entry) => void openVaultFile(entry.relativePath)}
+          onOpenSearchResult={(relativePath) =>
+            view === "planet"
+              ? navigateToSearchResult(relativePath)
+              : void openVaultFile(relativePath)
+          }
+        />
+      </div>
+      {!vaultMinimized && (
+        <div
+          className="sidebar-resize-handle"
+          role="separator"
+          aria-label="Resize knowledge vault"
+          aria-orientation="vertical"
+          tabIndex={0}
+          aria-valuemin={160}
+          aria-valuemax={460}
+          aria-valuenow={sidebarWidth}
+          title="Drag to resize vault. Arrow keys adjust width; double-click to reset."
+          onPointerDown={startSidebarResize}
+          onPointerMove={resizeSidebar}
+          onPointerUp={stopSidebarResize}
+          onPointerCancel={stopSidebarResize}
+          onLostPointerCapture={() => {
+            sidebarResizeStart.current = null;
+          }}
+          onDoubleClick={() => setSidebarWidth(240)}
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+              return;
+            event.preventDefault();
+            const maxWidth = Math.min(
+              460,
+              Math.max(260, window.innerWidth * 0.38),
+            );
+            setSidebarWidth((width) =>
+              event.key === "Home"
+                ? 193
+                : event.key === "End"
+                  ? maxWidth
+                  : Math.min(
+                      maxWidth,
+                      Math.max(
+                        160,
+                        width + (event.key === "ArrowRight" ? 20 : -20),
+                      ),
+                    ),
+            );
+          }}
+        />
+      )}
     </div>
   );
 
   return (
-    <main
-      className="app-shell"
-      style={
-        {
-          "--sidebar-width": `${sidebarWidth}px`,
-          "--chat-width": `${chatWidth}px`,
-        } as CSSProperties
-      }
-    >
-      <TopBar
-        settingsOpen={settingsOpen === "general"}
-        aiTerminalOpen={settingsOpen === "ai"}
-        onOpenSettings={() => setSettingsOpen("general")}
-        onOpenAi={() => {
-          setSettingsOpen("ai");
-          if (!chat.modelScan?.running) chat.refreshModels();
-        }}
-        view={view}
-        onChangeView={(next) => {
-          setSettingsOpen(null);
-          setView(next);
-        }}
-      />
-      {settingsOpen === "ai" ? (
-        <ModelSettings
-          chat={chat}
-          onClose={() => {
-            setSettingsOpen(null);
-            setView("workspace");
+    <>
+      {!startupDismissed && (
+        <StartupProgress
+          progress={startupProgress}
+          label={
+            startupError
+              ? "Startup needs attention"
+              : isScanning
+                ? snapshot
+                  ? "Loading Stations and approved context"
+                  : "Scanning knowledge vault"
+                : startupMatchesVault
+                  ? chat.startup.label
+                  : "Connecting desktop services"
+          }
+          error={startupError}
+          onContinue={() => setStartupDismissed(true)}
+        />
+      )}
+      <main
+        inert={!startupDismissed}
+        className="app-shell"
+        style={
+          {
+            "--sidebar-width": `${vaultMinimized ? 36 : sidebarWidth}px`,
+            "--chat-width": `${chatWidth}px`,
+          } as CSSProperties
+        }
+      >
+        <TopBar
+          settingsOpen={settingsOpen}
+          onOpenSettings={() => {
+            setSettingsOpen(true);
+            if (!chat.modelScan?.running) chat.refreshModels();
+          }}
+          view={view}
+          onChangeView={(next) => {
+            setSettingsOpen(false);
+            setView(next);
           }}
         />
-      ) : settingsOpen === "general" ? (
-        <section className="model-settings" aria-label="Settings">
-          <header>
-            <h1>Settings</h1>
-          </header>
-          <h2>Knowledge vault</h2>
-          <p>{snapshot?.rootPath ?? "No vault selected"}</p>
-          <button onClick={() => void changeVault()}>
-            Change vault folder
-          </button>
-          <h2>AI model setup</h2>
-          <p>
-            Manage local and online models, generation settings, and readiness
-            in AI Terminal.
-          </p>
-          <button onClick={() => setSettingsOpen("ai")}>
-            Open AI Terminal
-          </button>
-        </section>
-      ) : view === "planet" ? (
-        <div className="workspace-grid planet-grid">
-          {vaultSidebar}
-          {projection ? (
-            <PlanetScene
-              graph={projection.graph}
-              selectedIds={selectedSet}
-              onSelect={selectEntry}
-              onSelectMany={(ids, additive) =>
-                setSelectedIds((previous) =>
-                  additive ? [...new Set([...previous, ...ids])] : ids,
-                )
-              }
-              onOpenFile={openPlanetFile}
-              focusId={focusId}
-              onFocus={setFocusId}
-              stationMatchIds={projection.matches}
-              activeContextIds={activeContextIds}
-              projectionIds={projection.visible}
-              stationClusters={projection.clusters}
-              chatProps={chatProps}
-            />
-          ) : (
-            <section className="planet-view">
-              <div className="planet-view-header">
-                <span>PLANET VIEW</span>
-                <span className="planet-view-hint">Vault unavailable</span>
+        <div className="vault-runtime-notices">
+          {chat.pulls
+            .filter((pull) => ["model-pulling", "error"].includes(pull.phase))
+            .map((pull) => (
+              <div className="chat-notice" role="status" key={pull.model}>
+                {pull.phase === "model-pulling"
+                  ? "DOWNLOADING MODEL"
+                  : "MODEL DOWNLOAD FAILED"}{" "}
+                · {pull.model} · {pull.message}
+                {pull.phase === "model-pulling" ? (
+                  <button onClick={() => chat.cancelPull(pull.model)}>
+                    CANCEL
+                  </button>
+                ) : (
+                  <button
+                    disabled={chat.busy}
+                    onClick={() => void chat.downloadModel(pull.model)}
+                  >
+                    RETRY DOWNLOAD
+                  </button>
+                )}
               </div>
-              <div className="planet-canvas">
-                <div className="planet-empty">
-                  <span className="planet-orb large" />
-                  {vaultError ??
-                    snapshot?.message ??
-                    "No active vault is available."}
-                </div>
-              </div>
-            </section>
+            ))}
+          {isScanning && (
+            <div className="chat-notice" role="status">
+              SCANNING VAULT · Discovering files and indexing PDF text…
+            </div>
           )}
-          <aside className="planet-detail-panel">
-            <div className="planet-header">
-              <span>DETAILS + CONTEXT</span>
-              {primarySelectedId ? (
-                <button
-                  aria-label="Clear selection"
-                  onClick={() => selectEntry(null)}
-                >
-                  ×
-                </button>
-              ) : null}
+          {vaultError && (
+            <div className="chat-notice chat-error" role="alert">
+              VAULT SCAN FAILED · {vaultError}
             </div>
-            <div className="planet-detail-scroll">
-              <PlanetDetails
-                graph={graph}
-                selected={
-                  graph && primarySelectedId
-                    ? (graph.byId.get(primarySelectedId) ?? null)
-                    : null
-                }
-                onOpenFile={openPlanetFile}
-                onExplore={setFocusId}
-              />
-              <StationPanel
-                state={stationState}
-                brainScope={brainScope}
-                brainScopeBusy={brainScopeBusy}
-                brainScopeError={brainScopeError}
-                selectedPaths={selectedKnowledgePaths}
-                activeStationIds={activeStationIds}
-                matchMode={stationMatchMode}
-                busy={stationBusy}
-                error={stationError}
-                onCreate={(name) =>
-                  void stationMutation(() =>
-                    requireKnowledgeBridge().stations.create(name),
-                  )
-                }
-                onRename={(id, name) =>
-                  void stationMutation(() =>
-                    requireKnowledgeBridge().stations.rename(id, name),
-                  )
-                }
-                onDelete={(id) =>
-                  void stationMutation(() =>
-                    requireKnowledgeBridge().stations.delete(id),
-                  )
-                }
-                onAssign={(stationId, assigned) =>
-                  void stationMutation(() =>
-                    requireKnowledgeBridge().stations.setAssignments(
-                      selectedKnowledgePaths,
-                      stationId,
-                      assigned,
-                    ),
-                  )
-                }
-                onToggleFilter={(stationId) =>
-                  setActiveStationIds((current) => {
-                    const next = new Set(current);
-                    if (next.has(stationId)) next.delete(stationId);
-                    else next.add(stationId);
-                    return next;
-                  })
-                }
-                onMatchMode={setStationMatchMode}
-                onAddContext={() => void addSelectedToContext()}
-                onAddStationContext={() =>
-                  void addSelectedToContext([...(projection?.matches ?? [])])
-                }
-                onRemoveContext={(path) =>
-                  void stationMutation(() =>
-                    requireKnowledgeBridge().context.remove([path]),
-                  )
-                }
-                onClearContext={clearActiveContext}
-                onBuildPackage={() =>
-                  requireKnowledgeBridge().context.buildPackage() as Promise<ContextPackage>
-                }
-              />
-            </div>
-          </aside>
+          )}
+          {!!snapshot?.issues.length && !isScanning && (
+            <details className="chat-notice">
+              <summary>
+                VAULT · {snapshot.issues.length} WARNINGS · VIEW WARNINGS
+              </summary>
+              {snapshot.issues.map((issue, index) => (
+                <p key={index}>
+                  {issue.relativePath}: {issue.message}
+                </p>
+              ))}
+            </details>
+          )}
         </div>
-      ) : (
-        <div
-          className={`workspace-grid workspace-main${openedFile && "data" in openedFile && !workspaceError ? " workspace-grid-pdf" : ""}`}
-        >
-          {vaultSidebar}
-          <DocumentWorkspace
-            file={openedFile}
-            error={workspaceError}
+        {settingsOpen ? (
+          <ModelSettings
+            chat={chat}
+            vaultPath={snapshot?.rootPath ?? null}
+            changingVault={isScanning}
+            onChangeVault={() => void changeVault()}
             onClose={() => {
-              setOpenedFile(null);
-              setWorkspaceError(null);
+              setSettingsOpen(false);
+              setView("workspace");
             }}
           />
-          {!(openedFile && "data" in openedFile && !workspaceError) && (
+        ) : view === "agent" ? (
+          <AgentWorkspace
+            chat={chat}
+            onSettings={() => setAgentSettingsOpen(true)}
+            onManageContext={chatProps.onExpandContext!}
+            onOpenSource={chatProps.onOpenSource}
+          />
+        ) : view === "planet" ? (
+          <div
+            className={`workspace-grid planet-grid${planetFocus ? " canvas-focus" : ""}`}
+          >
+            {vaultSidebar}
+            {projection ? (
+              <PlanetScene
+                canvasFocus={planetFocus}
+                onToggleCanvasFocus={() => setPlanetFocus((value) => !value)}
+                onOpenSettings={() => setSettingsOpen(true)}
+                graph={projection.graph}
+                navigationTarget={planetNavigation}
+                selectedIds={selectedSet}
+                onSelect={selectEntry}
+                onSelectMany={(ids, additive) =>
+                  setSelectedIds((previous) =>
+                    additive ? [...new Set([...previous, ...ids])] : ids,
+                  )
+                }
+                onOpenFile={openPlanetFile}
+                focusId={focusId}
+                onFocus={setFocusId}
+                stationMatchIds={projection.matches}
+                activeContextIds={activeContextIds}
+                projectionIds={projection.visible}
+                stationClusters={projection.clusters}
+                chatProps={chatProps}
+              />
+            ) : (
+              <section className="planet-view">
+                <div className="planet-view-header">
+                  <span>PLANET VIEW</span>
+                  <button
+                    aria-label="Focus canvas"
+                    aria-pressed={planetFocus}
+                    onClick={() => setPlanetFocus((value) => !value)}
+                  >
+                    {planetFocus ? "Exit focus" : "Focus canvas"}
+                  </button>
+                  <span className="planet-view-hint">
+                    {isScanning ? "SCANNING VAULT" : "Vault unavailable"}
+                  </span>
+                </div>
+                <div className="planet-canvas">
+                  <div className="planet-empty">
+                    <span className="planet-orb large" />
+                    {isScanning
+                      ? "Discovering files and indexing PDF text…"
+                      : (vaultError ??
+                        snapshot?.message ??
+                        "No active vault is available.")}
+                  </div>
+                </div>
+              </section>
+            )}
+            <aside className="planet-detail-panel">
+              <div className="planet-header">
+                <span>DETAILS + CONTEXT</span>
+                {primarySelectedId ? (
+                  <button
+                    aria-label="Clear selection"
+                    onClick={() => selectEntry(null)}
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+              <div className="planet-detail-scroll">
+                <PlanetDetails
+                  graph={graph}
+                  selected={
+                    graph && primarySelectedId
+                      ? (graph.byId.get(primarySelectedId) ?? null)
+                      : null
+                  }
+                  onOpenFile={openPlanetFile}
+                  onExplore={setFocusId}
+                />
+                <StationPanel
+                  state={stationState}
+                  brainScope={brainScope}
+                  brainScopeBusy={brainScopeBusy}
+                  brainScopeError={brainScopeError}
+                  selectedPaths={selectedKnowledgePaths}
+                  activeStationIds={activeStationIds}
+                  activeContextBoxIds={activeContextBoxIds}
+                  matchMode={stationMatchMode}
+                  busy={stationBusy}
+                  error={stationError}
+                  onCreate={(name) =>
+                    void stationMutation(() =>
+                      requireKnowledgeBridge().stations.create(name),
+                    )
+                  }
+                  onRename={(id, name) =>
+                    void stationMutation(() =>
+                      requireKnowledgeBridge().stations.rename(id, name),
+                    )
+                  }
+                  onDelete={(id) =>
+                    void stationMutation(() =>
+                      requireKnowledgeBridge().stations.delete(id),
+                    )
+                  }
+                  onAssign={(stationId, assigned) =>
+                    void stationMutation(() =>
+                      requireKnowledgeBridge().stations.setAssignments(
+                        selectedKnowledgePaths,
+                        stationId,
+                        assigned,
+                      ),
+                    )
+                  }
+                  onToggleFilter={(stationId) =>
+                    setActiveStationIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(stationId)) next.delete(stationId);
+                      else next.add(stationId);
+                      return next;
+                    })
+                  }
+                  onMatchMode={setStationMatchMode}
+                  onAddStationContext={() =>
+                    void addSelectedToContext([...(projection?.matches ?? [])])
+                  }
+                  contextBoxManager={
+                    <ContextBoxManager
+                      onOpenLibrary={() =>
+                        setContextLibraryRequest({
+                          vaultPath: snapshot?.rootPath ?? "",
+                          nonce: Date.now(),
+                        })
+                      }
+                      key={snapshot?.rootPath}
+                      state={stationState}
+                      chat={chat}
+                      busy={stationBusy}
+                      selectedCount={selectedKnowledgePaths.length}
+                      activeBoxIds={activeContextBoxIds}
+                      onToggleFilter={(id) =>
+                        setActiveContextBoxIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(id)) next.delete(id);
+                          else next.add(id);
+                          return next;
+                        })
+                      }
+                      onAddSelected={() => void addSelectedToContext()}
+                      onRemove={(path) =>
+                        void stationMutation(() =>
+                          requireKnowledgeBridge().context.remove([path]),
+                        )
+                      }
+                      onClear={clearActiveContext}
+                      onManageBox={(id) =>
+                        setBoxDetailsRequest({
+                          id,
+                          nonce: Date.now(),
+                          vaultPath: snapshot?.rootPath ?? "",
+                        })
+                      }
+                    />
+                  }
+                />
+              </div>
+            </aside>
+          </div>
+        ) : (
+          <div className="workspace-grid workspace-main">
+            {vaultSidebar}
+            <DocumentWorkspace
+              file={openedFile}
+              error={workspaceError}
+              onAddToContext={() =>
+                openedFile &&
+                void addSelectedToContext([openedFile.relativePath])
+              }
+              contextBusy={stationBusy || chat.busy || isScanning}
+              contextApproved={Boolean(
+                openedFile &&
+                brainScope?.mode === "active-context" &&
+                brainScope.sources.some(
+                  (source) =>
+                    source.relativePath === openedFile.relativePath &&
+                    !source.missing &&
+                    !source.changed,
+                ),
+              )}
+              contextError={stationError}
+              onClose={() => {
+                setOpenedFile(null);
+                setWorkspaceError(null);
+              }}
+            />
             <ResizableChat width={chatWidth} onResize={setChatWidth}>
-              <ChatPanel {...chatProps} />
+              <ChatPanel {...chatProps} onUndock={() => setView("planet")} />
             </ResizableChat>
-          )}
-        </div>
-      )}
-      <StatusBar view={view} snapshot={snapshot} isScanning={isScanning} />
-      {confirmation}
-    </main>
+          </div>
+        )}
+        <StatusBar
+          agentName={chat.agent?.displayName}
+          agentContext={
+            chat.contextBoxes.find(
+              (box) => box.id === chat.conversation?.contextBoxId,
+            )?.name
+          }
+          agentModel={
+            chat.registry?.settings.modelId
+              ? `${chat.registry.settings.providerId} / ${chat.registry.settings.modelId}`
+              : undefined
+          }
+          view={view}
+          snapshot={snapshot}
+          isScanning={isScanning}
+          error={vaultError}
+        />
+        {snapshot?.status === "ready" && (
+          <ContextBoxes
+            key={snapshot.rootPath}
+            chat={chat}
+            libraryRequest={
+              contextLibraryRequest?.vaultPath === snapshot.rootPath
+                ? contextLibraryRequest.nonce
+                : 0
+            }
+            openBoxRequest={
+              boxDetailsRequest?.vaultPath === snapshot.rootPath
+                ? boxDetailsRequest
+                : null
+            }
+            selectedPaths={selectedKnowledgePaths}
+            onOpenSource={(path) => void openVaultFile(path)}
+            onAttach={() => setView("planet")}
+          />
+        )}
+        {confirmation}
+        {agentSettingsOpen && (
+          <AgentSettings
+            key={chat.activeAgentId}
+            chat={chat}
+            onClose={() => setAgentSettingsOpen(false)}
+          />
+        )}
+      </main>
+    </>
   );
 }

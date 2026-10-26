@@ -3,52 +3,59 @@ export function TopBar({
   onChangeView,
   settingsOpen,
   onOpenSettings,
-  aiTerminalOpen,
-  onOpenAi,
 }: Readonly<{
-  view: "workspace" | "planet";
-  onChangeView: (view: "workspace" | "planet") => void;
+  view: "workspace" | "planet" | "agent";
+  onChangeView: (view: "workspace" | "planet" | "agent") => void;
   settingsOpen: boolean;
   onOpenSettings: () => void;
-  aiTerminalOpen: boolean;
-  onOpenAi: () => void;
 }>) {
   return (
     <header className="top-bar">
       <div className="brand">
-        <span className="brand-mark">W</span>
-        <span>WONNYY</span>
-        <span className="version">Amadeus 0.0.6</span>
+        <img
+          className="brand-mark"
+          src="./qterminal-logo.png"
+          alt=""
+          width={16}
+          height={16}
+        />
+        <span>QTerminal</span>
+        <span className="version">1.0.0 Victoria</span>
       </div>
       <nav className="top-nav" aria-label="Primary">
         <button
-          className={`nav-item${!settingsOpen && !aiTerminalOpen && view === "workspace" ? " active" : ""}`}
+          className={`nav-item${!settingsOpen && view === "workspace" ? " active" : ""}`}
+          aria-label="WORKSPACE"
           onClick={() => onChangeView("workspace")}
         >
           WORKSPACE
         </button>
         <button
-          className={`nav-item${!settingsOpen && !aiTerminalOpen && view === "planet" ? " active" : ""}`}
+          className={`nav-item${!settingsOpen && view === "planet" ? " active" : ""}`}
+          aria-label="PLANET VIEW"
           onClick={() => onChangeView("planet")}
         >
           PLANET VIEW
         </button>
         <button
-          className={`nav-item${aiTerminalOpen ? " active" : ""}`}
-          aria-current={aiTerminalOpen ? "page" : undefined}
-          onClick={onOpenAi}
+          className={`nav-item${!settingsOpen && view === "agent" ? " active" : ""}`}
+          aria-label="AGENT"
+          aria-current={!settingsOpen && view === "agent" ? "page" : undefined}
+          onClick={() => onChangeView("agent")}
         >
-          AI TERMINAL
+          AGENT
         </button>
         <button
           className={`nav-item${settingsOpen ? " active" : ""}`}
+          aria-label="SETTINGS"
+          aria-current={settingsOpen ? "page" : undefined}
           onClick={onOpenSettings}
         >
           SETTINGS
         </button>
       </nav>
       <div className="top-actions">
-        <div className="quick-open">⌘K&nbsp; Quick Open</div>
+        <span className="workspace-edition">Your knowledge workspace</span>
       </div>
     </header>
   );

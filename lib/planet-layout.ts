@@ -176,19 +176,19 @@ function computeOrganicLayout(graph: PlanetGraph, sizeCache: ReadonlyMap<string,
     // directory. Keeping them on compact inner belts is the key hierarchy
     // invariant of the Planet view.
     let localOuter = nodeSize / 2;
-    const fileCapacity = 10;
+    const fileCapacity = 8;
     for (let start = 0, ringIndex = 0; start < files.length; start += fileCapacity, ringIndex += 1) {
       const ring = files.slice(start, start + fileCapacity);
       const largest = Math.max(...ring.map((fileId) => (sizeCache.get(fileId) ?? 6) / 2));
-      const circumference = ring.reduce((sum, fileId) => sum + (sizeCache.get(fileId) ?? 6) + 14, 0);
-      const orbit = Math.max(localOuter + largest + 22, circumference / TAU);
+      const circumference = ring.reduce((sum, fileId) => sum + (sizeCache.get(fileId) ?? 6) + 28, 0);
+      const orbit = Math.max(localOuter + largest + 34, circumference / TAU);
       const phase = stableUnit(id, `file-phase-${ringIndex}`) * TAU;
       ring.forEach((fileId, index) => {
         const angle = phase + ((index + 0.5) / ring.length) * TAU + (stableUnit(fileId, "file-angle") - 0.5) * 0.1;
         const point = plane.point(angle, orbit + (stableUnit(fileId, "file-radius") - 0.5) * 5);
         positions.set(fileId, { ...point, size: sizeCache.get(fileId) ?? 6 });
       });
-      localOuter = orbit + largest + 6;
+      localOuter = orbit + largest + 12;
     }
 
     // Each parent owns a small orbital system. Large families spill onto
@@ -198,14 +198,14 @@ function computeOrganicLayout(graph: PlanetGraph, sizeCache: ReadonlyMap<string,
     for (let start = 0, ringIndex = 0; start < children.length; start += ringCapacity, ringIndex += 1) {
       const ring = children.slice(start, start + ringCapacity);
       const largestChild = Math.max(...ring.map((child) => child.radius));
-      const requiredCircumference = ring.reduce((sum, child) => sum + child.radius * 2 + 24, 0);
-      const orbitRadius = Math.max(previousOuter + largestChild + 34, requiredCircumference / TAU);
+      const requiredCircumference = ring.reduce((sum, child) => sum + child.radius * 2 + 40, 0);
+      const orbitRadius = Math.max(previousOuter + largestChild + 48, requiredCircumference / TAU);
       const phase = stableUnit(id, `phase-${ringIndex}`) * TAU;
-      const totalWeight = ring.reduce((sum, child) => sum + child.radius * 2 + 24, 0);
+      const totalWeight = ring.reduce((sum, child) => sum + child.radius * 2 + 40, 0);
       let cursor = phase;
 
       for (const child of ring) {
-        const slot = ((child.radius * 2 + 24) / totalWeight) * TAU;
+        const slot = ((child.radius * 2 + 40) / totalWeight) * TAU;
         const angularJitter = (stableUnit(child.id, "angle") - 0.5) * Math.min(slot * 0.14, 0.12);
         const radialJitter = (stableUnit(child.id, "radius") - 0.5) * 8;
         const angle = cursor + slot / 2 + angularJitter;
@@ -222,7 +222,7 @@ function computeOrganicLayout(graph: PlanetGraph, sizeCache: ReadonlyMap<string,
 
     // Whole subtrees collide as bounded bodies. The home attraction prevents
     // a collision fix from breaking the subtree's relationship to its parent.
-    relaxLocalBodies(children, 14);
+    relaxLocalBodies(children, 24);
 
     let systemRadius = localOuter;
     for (const child of children) {

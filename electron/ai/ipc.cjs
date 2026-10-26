@@ -9,7 +9,9 @@ const {
   credentialProvider,
 } = require("./schemas.cjs");
 const { checkRemoteModel } = require("./model-check.cjs");
-const API_VERSION = 12;
+const { ModelPullService } = require("./model-pull.cjs");
+const { OpenRouterUsageService } = require("./openrouter-usage.cjs");
+const API_VERSION = 18;
 
 function registerAiIpc({
   ipcMain,
@@ -18,12 +20,42 @@ function registerAiIpc({
   registry,
   provider,
   credentials,
+  agents,
+  chooseAvatar,
 }) {
   const compatible = new Set();
   const checks = new Map();
+  const clients = new Map();
+  const usage = new OpenRouterUsageService({ credentials, registry });
+  const usageChanged = () => {
+    for (const sender of clients.values())
+      if (!sender.isDestroyed?.()) sender.send?.("ai:usageChanged");
+  };
+  const openrouter = registry?.providerFor?.("openrouter");
+  if (openrouter)
+    openrouter.onUsage = async (value, key) => {
+      await usage.record(value, key);
+      usageChanged();
+    };
+  const pulls = new ModelPullService(provider, (status) => {
+    for (const sender of clients.values())
+      if (!sender.isDestroyed()) sender.send("ai:pull", status);
+  });
   ipcMain.handle("ai:handshake", (event, version) => {
-    if (version === API_VERSION) compatible.add(event.sender.id);
-    else compatible.delete(event.sender.id);
+    if (version === API_VERSION) {
+      compatible.add(event.sender.id);
+      if (!clients.has(event.sender.id)) {
+        clients.set(event.sender.id, event.sender);
+        event.sender.once?.("destroyed", () => {
+          clients.delete(event.sender.id);
+          compatible.delete(event.sender.id);
+          pulls.cancelOwner(event.sender.id);
+        });
+      }
+    } else {
+      compatible.delete(event.sender.id);
+      clients.delete(event.sender.id);
+    }
     return { apiVersion: API_VERSION };
   });
   const handle = (name, operation) =>
@@ -32,29 +64,57 @@ function registerAiIpc({
         if (!compatible.has(event.sender.id))
           throw new ModelRuntimeError(
             "MODEL_RESTART_REQUIRED",
-            "Restart Wonnyy to load the matching desktop backend.",
+            "Restart QTerminal to load the matching desktop backend.",
           );
         return { ok: true, value: await operation(event, input) };
       } catch (error) {
+        if (
+          !(error instanceof ModelRuntimeError) &&
+          error?.name !== "BrainScopeError"
+        )
+          console.error("Wonnyy runtime:", error);
         return { ok: false, error: serializeModelError(error) };
       }
     });
+  handle("pullStatus", () => pulls.list());
+  handle("pullModel", (event, model) => {
+    service.assertIdle();
+    return pulls.start(model, event.sender.id);
+  });
+  handle("cancelPull", (event, model) => {
+    if (typeof model !== "string")
+      throw new ModelRuntimeError(
+        "MODEL_INVALID_REQUEST",
+        "Invalid model name.",
+      );
+    return pulls.cancel(model, event.sender.id);
+  });
   handle("getStatus", () => provider.getStatus());
+  handle("openRouterUsage", (_, input) => {
+    const options = parse(
+      z.object({ refresh: z.boolean().optional() }).strict(),
+      input ?? {},
+    );
+    return usage.get(options);
+  });
   handle("listModels", () => provider.listModels());
   handle("testModel", (_, model) =>
     service.exclusive(() => provider.testModel(model)),
   );
   handle("models", () => registry.state());
+  handle("getAgent", (_, id) => agents.get(id));
+  handle("saveAgent", (_, input) => agents.save(input));
+  handle("chooseAgentAvatar", () => chooseAvatar());
   handle("checkRemoteModel", (event, input) => {
     const { providerId, model } = parse(
       z
         .object({
-          providerId: z.enum(["gemini", "nvidia"]),
+          providerId: z.enum(["gemini", "nvidia", "openrouter"]),
           model: z
             .string()
             .min(1)
             .max(200)
-            .regex(/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?$/),
+            .regex(/^~?[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
         })
         .strict(),
       input,
@@ -87,15 +147,44 @@ function registerAiIpc({
     service.exclusive(() => registry.providerFor("nvidia").probe(model)),
   );
   handle("saveCredential", (_, input) =>
-    service.exclusive(() => credentials.save(parseCredential(input))),
+    service.exclusive(async () => {
+      const value = await credentials.save(parseCredential(input));
+      usage.invalidate();
+      usageChanged();
+      return value;
+    }),
   );
   handle("removeCredential", (_, input) =>
-    service.exclusive(() =>
-      credentials.remove(parse(credentialProvider, input)),
-    ),
+    service.exclusive(async () => {
+      const value = await credentials.remove(parse(credentialProvider, input));
+      usage.invalidate();
+      usageChanged();
+      return value;
+    }),
   );
   handle("settings", (_, input) =>
-    service.exclusive(() => registry.save(input)),
+    service.exclusive(async () => {
+      const value = await registry.save(input);
+      usage.invalidate();
+      usageChanged();
+      return value;
+    }),
+  );
+  handle("previewBoxSelection", (_, paths) =>
+    service.previewBoxSelection(getVault(), paths),
+  );
+  handle("inspectContextBox", (_, id) => service.inspectBox(getVault(), id));
+  handle("editContextBox", (_, input) => service.editBox(getVault(), input));
+  handle("switchContextBox", (_, input) =>
+    service.switchBox(getVault(), input),
+  );
+  handle("listContextBoxes", () => service.listBoxes(getVault()));
+  handle("saveContextBox", (_, input) => service.saveBox(getVault(), input));
+  handle("renameContextBox", (_, input) =>
+    service.renameBox(getVault(), input),
+  );
+  handle("checkConversation", (_, id) =>
+    service.checkConversation(getVault(), id),
   );
   handle("context", (_, input) => service.context(getVault(), input));
   handle("listConversations", () => service.list(getVault()));
@@ -107,9 +196,16 @@ function registerAiIpc({
   handle("refreshSource", () => service.refreshSource(getVault()));
   handle("cancel", (event, id) => service.cancel(event.sender.id, id));
   handle("chat", (event, input) =>
-    service.run(getVault(), event.sender.id, input, (value) => {
-      if (!event.sender.isDestroyed()) event.sender.send("ai:event", value);
-    }),
+    pulls.list().some((p) => p.phase === "model-pulling")
+      ? Promise.reject(
+          new ModelRuntimeError(
+            "MODEL_BUSY",
+            "A model is downloading. Finish or cancel the download first.",
+          ),
+        )
+      : service.run(getVault(), event.sender.id, input, (value) => {
+          if (!event.sender.isDestroyed()) event.sender.send("ai:event", value);
+        }),
   );
 }
 

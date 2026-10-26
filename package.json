@@ -1,6 +1,6 @@
 {
-  "name": "wonnyy-amadeus",
-  "version": "0.0.6",
+  "name": "qterminal",
+  "version": "1.0.0",
   "description": "Local-first AI-native knowledge and research workspace",
   "private": true,
   "main": "electron/main.cjs",
@@ -22,9 +22,18 @@
     "test:dataset:electron": "npm run build && node scripts/dataset-electron-acceptance.cjs",
     "test:chat:online": "node scripts/chat-live-acceptance.cjs --gemini",
     "test:chat:online:electron": "npm run build && node scripts/electron-online-chat-smoke.cjs",
+    "test:agent:electron": "npm run build && node scripts/agent-electron-acceptance.cjs",
     "test:chat:electron": "npm run build && node scripts/electron-chat-smoke.cjs",
     "format:integration": "prettier --write \"features/**/*.{ts,tsx,cjs,css}\" \"electron/ai/**/*.cjs\" electron/main.cjs electron/preload.cjs types/ai.ts types/electron.d.ts components/app-shell.tsx components/chat-panel.tsx components/top-bar.tsx \"scripts/*chat*.cjs\" scripts/electron-smoke-main.cjs",
-    "format:check": "prettier --check \"features/**/*.{ts,tsx,cjs,css}\" \"electron/ai/**/*.cjs\" electron/main.cjs electron/preload.cjs types/ai.ts types/electron.d.ts components/app-shell.tsx components/chat-panel.tsx components/top-bar.tsx \"scripts/*chat*.cjs\" scripts/electron-smoke-main.cjs"
+    "format:check": "prettier --check \"features/**/*.{ts,tsx,cjs,css}\" \"electron/ai/**/*.cjs\" electron/main.cjs electron/preload.cjs types/ai.ts types/electron.d.ts components/app-shell.tsx components/chat-panel.tsx components/top-bar.tsx \"scripts/*chat*.cjs\" scripts/electron-smoke-main.cjs",
+    "test:chat:openrouter:electron": "npm run build && node scripts/electron-openrouter-smoke.cjs",
+    "test:agent:workspace:electron": "npm run build && node scripts/electron-agent-workspace-smoke.cjs",
+    "test:usage:electron": "npm run build && node scripts/electron-usage-monitor-smoke.cjs",
+    "test:victoria:electron": "npm run build && node scripts/electron-victoria-smoke.cjs",
+    "test:ui-polish:electron": "npm run build && node scripts/electron-ui-polish-smoke.cjs",
+    "test:surfaces:electron": "npm run build && node scripts/electron-soft-surfaces-smoke.cjs",
+    "test:chronoz:electron": "npm run build && node scripts/electron-chronoz-smoke.cjs",
+    "test:startup:electron": "npm run build && node scripts/electron-startup-smoke.cjs"
   },
   "dependencies": {
     "next": "^16.0.0",
@@ -51,16 +60,17 @@
   },
   "build": {
     "appId": "com.wonnyy.amadeus",
-    "productName": "Wonnyy",
+    "productName": "QTerminal",
     "files": [
       "out/**/*",
       "electron/**/*",
       "build/icon.png",
+      "build/icon.ico",
       "package.json"
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,

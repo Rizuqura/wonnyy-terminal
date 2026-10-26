@@ -1,4 +1,14 @@
-# Wonnyy - Amadeus 0.0.6
+# QTerminal 1.0.0 Victoria
+
+Victoria adds comfortable Workspace and Planet View chat surfaces, readable document typography, and explicit file-to-context review while retaining retro Context Box and Station tools. See the [Victoria handoff](big-context/feature/victoria-workspace-handoff.md).
+
+The **Wonnyy Agent** chat workflow uses saved named Context Boxes and explicitly created sessions. See the [refactor handoff](big-context/feature/wonnyy-agent-handoff.md) for source binding, legacy history behavior and desktop verification.
+
+Planet View includes a collapsible **OpenRouter usage monitor** for verified key allowance in USD and separately scoped local input/output tokens. Wallet credits stay unavailable without management access; no weekly budget is assumed. See the [usage handoff](big-context/feature/openrouter-usage-handoff.md). Run `npm run test:usage:electron` for isolated UI acceptance.
+
+Wonnyy Agent and **CHronoZ** share the chat engine with separate histories and preferences. CHronoZ starts with no custom instructions, skills or profile image. Planet View offers wider orbital spacing, larger picking assistance and **Focus canvas** to hide panels/minimize chat. See the [CHronoZ and Planet handoff](big-context/feature/chronoz-planet-handoff.md).
+
+The **AGENT** tab uses a minimal Settings-style view: Wonnyy appears as a contact with a searchable chat-history dropdown, resizable panes and optional bound-source details. Individual agent settings retain custom instructions and a local profile picture. Static surfaces avoid animations and blur. See the [Agent workspace handoff](big-context/feature/agent-workspace-handoff.md). Desktop bridge **18** requires restarting Electron after updating. Run `npm run test:agent:workspace:electron` for its isolated UI acceptance checks.
 
 Wonnyy is a local-first Electron research workspace. Explorer, Planet View, and the document reader share a user-owned vault. Chat uses up to 32 explicitly approved Markdown, CSV or extracted-PDF-text sources through a controlled Electron boundary. Station matches can be reviewed and added to Active Context. Context sizing is manual; maximum usable model capacity remains unmeasured.
 
@@ -20,39 +30,46 @@ npm run test:dataset:live    # real local CSV analysis + follow-ups, 16,000 rows
 npm run test:dataset:electron # build + hidden Electron CSV/IPC test, 20,000 rows
 npm run test:chat:online     # real Gemini acceptance; requires key + model env vars
 npm run test:chat:online:electron # hidden Electron online smoke, synthetic provider
+npm run test:chat:openrouter:electron # OpenRouter setup, streaming and restart, synthetic transport
 npm run format:check
 ```
 
-Saving a Gemini or NVIDIA key starts sequential model checks. Saved keys are also checked once when the workspace loads. Passing models receive a star and sort to the top of their provider list, fastest first. AI Terminal shows progress, Stop checks, and Recheck all models. Scans pause on quota/authentication errors. Results are session-only, and a star proves one synthetic source check, not ongoing reliability or free access. Checks use provider quota.
+Saving a Gemini or NVIDIA key starts sequential model checks. Saved keys are also checked once when the workspace loads. Passing models receive a star and sort to the top of their provider list, fastest first. Settings shows progress, Stop checks, and Recheck all models. Scans pause on quota/authentication errors. Results are session-only, and a star proves one synthetic source check, not ongoing reliability or free access. Checks use provider quota.
 
 The Electron smoke test uses Playwright with the installed Electron binary; it does not require downloading a separate browser. It closes its test application and deletes its temporary vault. Screenshots and test reports are written to ignored `test-results/`.
 
-For local chat, start Ollama at `http://127.0.0.1:11434`. Set `WONNYY_OLLAMA_URL` only to another unauthenticated loopback HTTP endpoint. Install local models outside Wonnyy, then refresh models in AI Terminal.
+For local chat, start Ollama at `http://127.0.0.1:11434`. Set `WONNYY_OLLAMA_URL` only to another unauthenticated loopback HTTP endpoint. Install local models outside Wonnyy, then refresh models in Settings.
 
-For online chat, open **AI Terminal**, enter your Gemini API key, and choose **Save API key**. Saving discovers models and automatically checks them with a fixed synthetic source, without sending vault content. Choose **Use online** on a discovered model to enable Gemini inference. The approved source, question, and included conversation history are then sent to Google; LOCAL / ONLINE remains visible in chat. Existing conversations and source approval remain intact when switching providers. Pricing and quotas depend on your Google project, and free-tier data may be used to improve Google products; see [Google's pricing and data-use table](https://ai.google.dev/gemini-api/docs/pricing).
+For online chat, open **Settings**, select **Gemini**, enter your API key, and choose **Save key**. Saving discovers models and automatically checks them with a fixed synthetic source, without sending vault content. Choose **Use online** on a discovered model to enable Gemini inference. The approved source, question, and included conversation history are then sent to Google; LOCAL / ONLINE remains visible in chat. Existing conversations and source approval remain intact when switching providers. Pricing and quotas depend on your Google project, and free-tier data may be used to improve Google products; see [Google's pricing and data-use table](https://ai.google.dev/gemini-api/docs/pricing).
 
-Keys are encrypted with Electron `safeStorage` in application data, never persisted in the renderer or vault, and never returned through IPC. Secure storage must be available; plaintext fallback is refused. Remove API key deletes the saved credential without deleting conversations. Gemini retries HTTP 500/502/503/504 at most twice before streaming, with exponential backoff under the original cancellation and timeout limits. Retry-After is respected; waits above ten seconds require explicit retry. There is no automatic provider failover. Remote timeouts and quota errors offer explicit retry. Additional providers remain deferred.
+Keys are encrypted with Electron `safeStorage` in application data, never persisted in the renderer or vault, and never returned through IPC. Secure storage must be available; plaintext fallback is refused. Remove API key deletes the saved credential without deleting conversations. Gemini retries HTTP 500/502/503/504 at most twice before streaming, with exponential backoff under the original cancellation and timeout limits. Retry-After is respected; waits above ten seconds require explicit retry. There is no automatic provider failover. Remote timeouts and quota errors offer explicit retry. OpenRouter is also available; see the setup below.
 
-For NVIDIA, save an NVIDIA API key in **AI Terminal** and refresh models. **NVIDIA models** lists catalog candidates; **Check model** sends a fixed synthetic prompt without vault content and shows a dated pass/fail result plus session totals. Choose **Use online** to continue your approved-context conversation through NVIDIA. A catalog listing or one successful check does not guarantee ongoing availability or free access. See [the NVIDIA handoff](big-context/nvidia-provider-handoff.md) for verification and limits.
+For NVIDIA, save an NVIDIA API key in **Settings** and refresh models. **NVIDIA models** lists catalog candidates; **Check model** sends a fixed synthetic prompt without vault content and shows a dated pass/fail result plus session totals. Choose **Use online** to continue your approved-context conversation through NVIDIA. A catalog listing or one successful check does not guarantee ongoing availability or free access. See [the NVIDIA handoff](big-context/nvidia-provider-handoff.md) for verification and limits.
+
+For OpenRouter, select **OpenRouter** in **Settings**, save your key, search the catalog and choose **Use online**. OpenRouter checks are explicit; saving a key only discovers models. Keys use the same encrypted OS storage as other providers. Attached context and included history are sent to OpenRouter and its model providers. See [the OpenRouter and Settings handoff](big-context/openrouter-handoff.md) for setup, transport details and verification. Restart Electron for bridge **18**.
 
 The initial vault is `C:\bank`, configurable with `WONNYY_VAULT_PATH`; Change Vault opens the native folder picker.
 
 ## Chat workflow
 
-1. Select files or activate Station filters, then review and explicitly add the resulting files to Active Context.
-2. Ask natural questions in the floating Planet chat or Workspace chat.
-3. Use New Chat to start another discussion of the same approved source.
-4. Changing the approved source or approving a changed version creates a clean conversation boundary.
-5. Select an old conversation to view it. Resume with this source explicitly restores its unchanged source authorization.
-6. Use Settings to switch installed models. Stop an active generation before changing settings.
+1. Select files in Explorer or Planet View (Ctrl/Cmd adds to the selection). In Planet View’s context manager, choose **Open Context Box library**, then **Add to Context Box…** or **Create Context Box from Selection…**. The vault sidebar contains files only.
+2. Review the expanded file list, deselect unwanted files, choose an existing box or name a new one, and save. Unsupported selections and duplicates are disclosed. Opening, cancelling or saving this setup never creates a chat.
+3. Choose **+ New Chat**, select a saved Context Box, and confirm **Create Chat**. Cancelling leaves history unchanged.
+4. Ask questions in the floating Planet panel or docked Workspace panel. Each turn reads the latest files in its attached box and records their hashes. Box details provide source links, rename, remove, relink and confirmed deletion. **Attach to Wonnyy Agent** preselects a box without starting a chat.
+5. Use **History** to search/open prior chats. Rename chats and Context Boxes independently.
+6. Global selection and Active Context changes do not rebind existing chats. Use the agent's Context Box selector and confirm a switch for future turns. Old answers retain their original evidence; exchanges from other boxes/source versions are excluded from model memory.
+7. Legacy conversations without a Context Box remain readable. Choose **Create bound chat**, or explicitly attach a box using the selector. Empty boxes can be saved for later; missing/unreadable files block sending until removed or relinked.
+8. Use Settings to switch providers/models; stop an active generation before changing settings.
 
-Visual selection does not grant model access. Old chat messages remain viewable when a source changes or disappears, but the old source version cannot be resumed because source snapshots are not stored.
+Source snapshots are not stored. Historical source hashes identify the version used, while source links open the current file. The floating panel supports all eight resize directions, keyboard arrow resizing, Reset, minimize and close/reopen. Workspace retains its width divider and an Undock action.
+
+Existing reviewed Active Context remains available through **Save Active Context as box**. Folder selections are expanded only during explicit review; later Station matches or new folder files never expand a saved box automatically. Chats support 1–32 readable Markdown, CSV or text PDF files, subject to the existing source and model budgets. Restart Electron for bridge version 16.
 
 ## CSV analysis
 
 NVIDIA HTTP 500/502/503/504 failures are retried automatically up to twice before an answer stream is consumed, within the original request deadline. This retries the failed model request without restarting completed CSV calculations. Backoff respects Retry-After up to ten seconds; longer waits require explicit retry. Cancellation, authentication failures, rate limits and interrupted answer streams are not automatically retried.
 
-Add CSV files to Active Context, select an installed model, and ask a dataset question. Wonnyy parses the full CSV in a cancellable worker, sends column profiles and a small sample to the model, validates its structured requests, and executes calculations locally. The final answer receives computed results and includes source/filter evidence. The run audit stores requests and results under `diagnostics.datasetAnalysis`.
+Add CSV files to a Context Box, explicitly create or attach a chat, select an available model, and ask a dataset question. Wonnyy parses the full CSV in a cancellable worker, sends column profiles and a small sample to the model, validates its structured requests, and executes calculations locally. The final answer receives computed results and includes source/filter evidence. The run audit stores requests and results under `diagnostics.datasetAnalysis`.
 
 Follow-ups can also receive results from the last two successful analyses. Their queries are rerun against the same approved source version, bounded to 6,000 characters of analytical history, and recorded under `diagnostics.datasetHistory`. The source footer identifies these recomputed earlier analyses.
 
@@ -80,6 +97,7 @@ The renderer has no direct filesystem or provider API access. Production uses Ne
 Vault metadata remains under `.wonnyy/`, excluded from knowledge discovery:
 
 - `stations.json`: Stations and Active Context.
+- `context-boxes.json`: named boxes and stable file memberships; source contents remain in the vault.
 - `conversations/<id>.json`: messages, context hashes, and run references.
 - `model-runs/<id>.json`: immutable success, failure, and cancellation audits.
 

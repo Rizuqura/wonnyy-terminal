@@ -6,7 +6,7 @@ function planningOnly(text) {
   );
 }
 
-function validateAnswer(response, question = "", history = []) {
+function validateAnswer(response, question = "", history = [], sources = []) {
   let value;
   try {
     value = JSON.parse(response.content);
@@ -15,7 +15,7 @@ function validateAnswer(response, question = "", history = []) {
     response.finishReason !== "stop" ||
     !value ||
     Array.isArray(value) ||
-    Object.keys(value).length !== 1 ||
+    Object.keys(value).some((key) => !["answer", "citations"].includes(key)) ||
     typeof value.answer !== "string" ||
     !value.answer.trim() ||
     planningOnly(value.answer) ||
@@ -41,7 +41,24 @@ function validateAnswer(response, question = "", history = []) {
       },
     );
   }
+  if (
+    value.citations !== undefined &&
+    (!Array.isArray(value.citations) ||
+      value.citations.length > 32 ||
+      value.citations.some(
+        (id) =>
+          typeof id !== "string" ||
+          !sources.some((source) => source.sourceId === id),
+      ))
+  )
+    throw new ModelRuntimeError(
+      "MODEL_INVALID_RESPONSE",
+      "The answer cites a source outside the attached Context Box.",
+      { reason: "invalid_citation" },
+    );
   const answer = value.answer.trim();
+  // Repeated abstention is a valid outcome, never a reason to regenerate.
+  if (/^(?:CONTEXT INSUFFICIENT|LIMITED CONTEXT)\b/.test(answer)) return answer;
   const normalize = (text) => text.toLowerCase().replace(/\s+/gu, " ").trim();
   // Short factual answers can legitimately repeat. Only reject a substantial
   // copied answer to a different question, and honor explicit repetition tasks.

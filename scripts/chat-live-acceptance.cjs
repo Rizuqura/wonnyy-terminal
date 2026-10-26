@@ -172,7 +172,7 @@ async function main() {
         300000,
       );
     await stations.addContext(root, ["alpha.md"]);
-    let alpha = await service.create(root, scope);
+    let alpha = await createBound(service, root, scope);
     for (const question of questions)
       alpha = await turn(alpha, question, /BETA|40%|water recycling/i);
     report.checks.push(
@@ -237,7 +237,7 @@ async function main() {
     }
     await stations.clearContext(root);
     await stations.addContext(root, ["beta.md"]);
-    let beta = await service.create(root, scope);
+    let beta = await createBound(service, root, scope);
     for (const question of questions)
       beta = await turn(beta, question, /ALPHA|25%|solar/i);
     report.checks.push("Ten source-B turns without source-A contamination");
@@ -301,3 +301,13 @@ main().catch((error) => {
   process.stderr.write(`${error.code || error.name}: ${error.message}\n`);
   process.exitCode = 1;
 });
+
+async function createBound(service, root, _scope) {
+  const box = await service.saveBox(root, {
+    name: "Test " + require("node:crypto").randomUUID(),
+  });
+  return service.create(root, {
+    contextBoxId: box.id,
+    creationId: require("node:crypto").randomUUID(),
+  });
+}

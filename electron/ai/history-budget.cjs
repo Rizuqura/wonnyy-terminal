@@ -14,8 +14,18 @@ function budgetHistory(baseMessages, history, settings) {
   if (baseTokens > available)
     throw new ModelRuntimeError(
       "MODEL_CONTEXT_TOO_LARGE",
-      "The approved source and question do not fit the selected model limits. Increase the context window or approve a smaller source.",
-      { estimatedTokens: baseTokens, available },
+      `Context Box and question need approximately ${baseTokens} input tokens; ${available} are available (${settings.contextWindow} window minus ${settings.outputLimit} output and 256 reserve). Increase the context window or remove files from this box. No sources were truncated.`,
+      {
+        estimatedTokens: baseTokens,
+        available,
+        contextWindow: settings.contextWindow,
+        outputLimit: settings.outputLimit,
+        reserve: 256,
+        messageBreakdown: baseMessages.map((message) => ({
+          role: message.role,
+          estimatedTokens: estimateTokens([message]),
+        })),
+      },
     );
   const exchanges = [];
   for (let index = 0; index + 1 < history.length; index += 2) {

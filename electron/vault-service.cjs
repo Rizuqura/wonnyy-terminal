@@ -10,6 +10,19 @@ const PDFJS_DIRECTORY = path.dirname(require.resolve("pdfjs-dist/package.json"))
 let pdfjsPromise;
 const pdfIndexes = new Map();
 const activeScans = new Map();
+const snapshots = new Map();
+async function getVaultSnapshot(rootPath) {
+  const key = await fs.realpath(rootPath).catch(() => null);
+  if (!key) return scanVault(rootPath);
+  return activeScans.get(path.resolve(rootPath)) ?? activeScans.get(key) ?? snapshots.get(key) ?? scanVault(key);
+}
+async function readIndexedPdfText(rootPath, relativePath) {
+  const { absolutePath, stats } = await statVaultFile(rootPath, relativePath, ".pdf");
+  const issues = [];
+  await indexPdf(rootPath, absolutePath, relativePath, stats, issues);
+  if (issues.length) throw new Error(issues[0].message);
+  return getIndexedPdfText(rootPath, relativePath) ?? "";
+}
 
 function issue(relativePath, message) {
   return { relativePath, message };
@@ -52,10 +65,22 @@ async function extractPdfText(absolutePath) {
       for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
         const page = await document.getPage(pageNumber);
         const textContent = await page.getTextContent();
-        pages.push(textContent.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+        const text = textContent.items
+          .filter((item) => "str" in item)
+          .map((item) => item.str + (item.hasEOL ? "\n" : " "))
+          .join("")
+          .replace(/[^\S\n]+/g, " ")
+          .replace(/ *\n */g, "\n")
+          .trim();
+        pages.push(text);
         page.cleanup();
       }
-      return { text: pages.join("\n").replace(/\s+/g, " ").trim(), pageCount: document.numPages };
+      return {
+        text: pages.some(Boolean)
+          ? pages.map((text, index) => `[PDF page ${index + 1}]\n${text || "[No extractable text on this page. Page images were not supplied.]"}`).join("\n\n")
+          : "",
+        pageCount: document.numPages,
+      };
     } finally {
       await document.cleanup();
     }
@@ -73,6 +98,10 @@ async function indexPdf(rootPath, absolutePath, relativePath, stats, issues) {
     return { textStatus: "too-large", pageCount: null };
   }
   if (existing && existing.size === stats.size && existing.mtimeMs === stats.mtimeMs) {
+    if (existing.error) {
+      issues.push(issue(relativePath, existing.error));
+      return { textStatus: "error", pageCount: null };
+    }
     return { textStatus: existing.text ? "ready" : "empty", pageCount: existing.pageCount };
   }
   try {
@@ -80,8 +109,9 @@ async function indexPdf(rootPath, absolutePath, relativePath, stats, issues) {
     pdfTextIndex.set(relativePath, { size: stats.size, mtimeMs: stats.mtimeMs, text, pageCount });
     return { textStatus: text ? "ready" : "empty", pageCount };
   } catch {
-    pdfTextIndex.delete(relativePath);
-    issues.push(issue(relativePath, "Could not extract searchable PDF text. The file may still be previewable."));
+    const message = "Could not extract searchable PDF text. The file may still be previewable.";
+    pdfTextIndex.set(relativePath, { size: stats.size, mtimeMs: stats.mtimeMs, text: "", pageCount: null, error: message });
+    issues.push(issue(relativePath, message));
     return { textStatus: "error", pageCount: null };
   }
 }
@@ -146,7 +176,7 @@ function countEntries(entries) {
 function scanVault(rootPath) {
   const key = path.resolve(rootPath);
   if (activeScans.has(key)) return activeScans.get(key);
-  const scanning = scanVaultContents(key).finally(() => activeScans.delete(key));
+  const scanning = scanVaultContents(key).then(async (snapshot) => { snapshots.set(await fs.realpath(key).catch(() => key), snapshot); return snapshot; }).finally(() => activeScans.delete(key));
   activeScans.set(key, scanning);
   return scanning;
 }
@@ -166,6 +196,9 @@ async function scanVaultContents(rootPath) {
   const issues = [];
   const seenPdfPaths = new Set();
   const entries = await scanDirectory(rootPath, rootPath, "", issues, seenPdfPaths);
+  if (issues.some((entry) => entry.relativePath === ".")) {
+    return { status: "unavailable", rootPath, entries: [], totalFiles: 0, totalDirectories: 0, lastScannedAt: null, issues, message: "The vault directory could not be scanned. Check folder permissions and try again." };
+  }
   for (const indexedPath of pdfTextIndex.keys()) {
     if (!seenPdfPaths.has(indexedPath)) pdfTextIndex.delete(indexedPath);
   }
@@ -200,7 +233,8 @@ async function readVaultFile(rootPath, relativePath) {
 async function readPdfFile(rootPath, relativePath) {
   const { absolutePath, stats } = await statVaultFile(rootPath, relativePath, ".pdf");
   if (stats.size > MAX_PDF_BYTES) throw new Error("PDF exceeds the 100 MB preview limit.");
-  return { name: path.basename(absolutePath), relativePath, size: stats.size, data: new Uint8Array(await fs.readFile(absolutePath).catch((error) => { throw new Error(readableError(error)); })) };
+  const pdf = await indexPdf(rootPath, absolutePath, relativePath, stats, []);
+  return { name: path.basename(absolutePath), relativePath, size: stats.size, ...pdf, data: new Uint8Array(await fs.readFile(absolutePath).catch((error) => { throw new Error(readableError(error)); })) };
 }
 
 function countMatches(text, query) {
@@ -232,4 +266,4 @@ function getIndexedPdfText(rootPath, relativePath) {
   return pdfIndexes.get(path.resolve(rootPath))?.get(relativePath)?.text ?? null;
 }
 
-module.exports = { MAX_PDF_BYTES, getIndexedPdfText, readPdfFile, readVaultFile, resolveVaultFile, scanVault, searchPdfText };
+module.exports = { getVaultSnapshot, readIndexedPdfText, MAX_PDF_BYTES, getIndexedPdfText, readPdfFile, readVaultFile, resolveVaultFile, scanVault, searchPdfText };

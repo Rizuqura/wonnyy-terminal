@@ -3,24 +3,54 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import type { ChatController } from "./use-chat-runtime";
+import {
+  clampGeometry,
+  resizeGeometry,
+  type ResizeDirection,
+  type PanelGeometry,
+} from "./panel-geometry";
 import { ConversationHistory } from "./conversation-history";
-import { useConfirmation } from "../dialogs/use-confirmation";
+import { AgentAvatar } from "../agent/agent-avatar";
 
 export type { ChatMessage } from "../../types/ai";
 export type ChatPanelProps = {
-  variant?: "panel" | "floating";
+  variant?: "panel" | "floating" | "workspace";
   controller: ChatController;
   onOpenSource: (path: string) => void;
+  onExpandContext?: () => void;
+  onUndock?: () => void;
+  onOpenAgentSettings?: () => void;
+  onOpenAgentWorkspace?: () => void;
+  onToggleDetails?: () => void;
+  detailsOpen?: boolean;
+  minimizeForCanvas?: boolean;
 };
 
 export function ChatPanel({
   variant = "panel",
   controller: chat,
   onOpenSource,
+  onExpandContext,
+  onUndock,
+  onOpenAgentSettings,
+  onOpenAgentWorkspace,
+  onToggleDetails,
+  detailsOpen,
+  minimizeForCanvas,
 }: Readonly<ChatPanelProps>) {
   const isFloating = variant === "floating";
-  const { confirm, confirmation } = useConfirmation();
+  const agentName = chat.agent?.displayName ?? "Wonnyy Agent";
+  const [closed, setClosed] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  useEffect(() => {
+    if (minimizeForCanvas) setIsMinimized(true);
+  }, [minimizeForCanvas]);
+  useEffect(() => {
+    if (chat.openAgentVersion) {
+      setClosed(false);
+      setIsMinimized(false);
+    }
+  }, [chat.openAgentVersion]);
   const [position, setPosition] = useState<{
     left: number;
     top: number;
@@ -29,6 +59,9 @@ export function ChatPanel({
     null,
   );
   const panelRef = useRef<HTMLElement>(null);
+  const geometryRef = useRef<PanelGeometry | null>(null);
+  if (position && size)
+    geometryRef.current = { x: position.left, y: position.top, ...size };
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   // Restore focus only after an action inside this chat surface. Context
@@ -43,9 +76,10 @@ export function ChatPanel({
     const containWheel = (event: WheelEvent) => event.stopPropagation();
     panel?.addEventListener("wheel", containWheel, { passive: true });
     return () => panel?.removeEventListener("wheel", containWheel);
-  }, []);
+  }, [closed]);
   const dragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const resizeRef = useRef<{
+    direction: ResizeDirection;
     startX: number;
     startY: number;
     width: number;
@@ -74,13 +108,43 @@ export function ChatPanel({
     });
   }, [chat.conversation]);
   const latest = chat.conversation?.attempts.at(-1);
+  const neutral = ["CANCELLED", "CONTEXT_INSUFFICIENT"].includes(
+    chat.runtime.state,
+  );
   const error = chat.runtime.error ?? latest?.error?.message;
-  const statusLabel =
-    chat.busy &&
-    chat.runtime.diagnostics?.timeoutRetryCount === 1 &&
-    ["MODEL_LOADING", "GENERATING"].includes(chat.runtime.state)
-      ? "Retrying slow response automatically (1/1)…"
-      : chat.runtime.state.replaceAll("_", " ");
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!chat.runtime.requestId) return;
+    const tick = () =>
+      setElapsed(
+        Math.max(
+          0,
+          (Date.now() - (chat.runtime.status?.startedAt ?? Date.now())) / 1000,
+        ),
+      );
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [chat.runtime.requestId, chat.runtime.status?.startedAt]);
+  const progress = chat.runtime.status?.progress;
+  const pulling = chat.pulls.find((p) => p.phase === "model-pulling");
+  const statusLabel = !chat.conversation
+    ? "NO ACTIVE CHAT"
+    : !chat.attached
+      ? chat.unavailableReason
+        ? "CONTEXT INVALID"
+        : "LOADING CONTEXT"
+      : chat.runtime.state === "CONTEXT_TOO_LARGE"
+        ? "CONTEXT BUDGET EXCEEDED"
+        : chat.busy &&
+            chat.runtime.diagnostics?.timeoutRetryCount === 1 &&
+            ["MODEL_LOADING", "GENERATING"].includes(chat.runtime.state)
+          ? "RETRYING REQUEST · ATTEMPT 2/2"
+          : chat.runtime.state === "CANCELLED"
+            ? "RUN CANCELLED"
+            : chat.runtime.state === "MODEL_MISSING"
+              ? "MODEL NOT INSTALLED"
+              : chat.runtime.state.replaceAll("_", " ");
   useEffect(() => {
     if (followTail.current)
       threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
@@ -141,19 +205,23 @@ export function ChatPanel({
       event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
-  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const panel = panelRef.current;
-    const parent = panel?.offsetParent as HTMLElement | null;
+  const startResize = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    direction: ResizeDirection,
+  ) => {
+    const panel = panelRef.current,
+      parent = panel?.offsetParent as HTMLElement | null;
     if (!isFloating || !panel || !parent || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    const rect = panel.getBoundingClientRect();
-    const parentRect = parent.getBoundingClientRect();
-    const left = rect.left - parentRect.left;
-    const top = rect.top - parentRect.top;
+    const rect = panel.getBoundingClientRect(),
+      bounds = parent.getBoundingClientRect();
+    const left = rect.left - bounds.left,
+      top = rect.top - bounds.top;
     setPosition({ left, top });
     setSize({ width: rect.width, height: rect.height });
     resizeRef.current = {
+      direction,
       startX: event.clientX,
       startY: event.clientY,
       width: rect.width,
@@ -163,31 +231,94 @@ export function ChatPanel({
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
-
   const resize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const start = resizeRef.current;
-    const panel = panelRef.current;
-    const parent = panel?.offsetParent as HTMLElement | null;
-    if (!start || !panel || !parent) return;
-    const parentRect = parent.getBoundingClientRect();
-    setSize({
-      width: Math.min(
-        parentRect.width - start.left,
-        Math.max(240, start.width + event.clientX - start.startX),
-      ),
-      height: Math.min(
-        parentRect.height - start.top,
-        Math.max(180, start.height + event.clientY - start.startY),
-      ),
-    });
+    const start = resizeRef.current,
+      parent = panelRef.current?.offsetParent as HTMLElement | null;
+    if (!start || !parent) return;
+    const g = resizeGeometry(
+      { x: start.left, y: start.top, width: start.width, height: start.height },
+      start.direction,
+      event.clientX - start.startX,
+      event.clientY - start.startY,
+      parent.clientWidth,
+      parent.clientHeight,
+    );
+    setPosition({ left: g.x, top: g.y });
+    setSize({ width: g.width, height: g.height });
   };
-
   const stopResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     resizeRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
+  const resetGeometry = () => {
+    const parent = panelRef.current?.offsetParent as HTMLElement | null;
+    if (!parent) return;
+    const g = clampGeometry(
+      { x: parent.clientWidth - 460, y: 24, width: 440, height: 560 },
+      parent.clientWidth,
+      parent.clientHeight,
+    );
+    setPosition({ left: g.x, top: g.y });
+    setSize({ width: g.width, height: g.height });
+  };
+  useEffect(() => {
+    if (!isFloating) return;
+    const parent = panelRef.current?.offsetParent as HTMLElement | null;
+    if (!parent) return;
+    let saved;
+    try {
+      saved = JSON.parse(
+        localStorage.getItem("qterminal-agent-geometry") ?? "null",
+      );
+    } catch {}
+    const valid =
+      saved &&
+      ["x", "y", "width", "height"].every((k) => Number.isFinite(saved[k]));
+    const g = clampGeometry(
+      valid
+        ? saved
+        : { x: parent.clientWidth - 460, y: 24, width: 440, height: 560 },
+      parent.clientWidth,
+      parent.clientHeight,
+    );
+    geometryRef.current = g;
+    setPosition({ left: g.x, top: g.y });
+    setSize({ width: g.width, height: g.height });
+    const observer = new ResizeObserver(() => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const r = panel.getBoundingClientRect(),
+        p = parent.getBoundingClientRect();
+      const next = clampGeometry(
+        geometryRef.current ?? {
+          x: r.left - p.left,
+          y: r.top - p.top,
+          width: r.width,
+          height: r.height,
+        },
+        parent.clientWidth,
+        parent.clientHeight,
+      );
+      setPosition({ left: next.x, top: next.y });
+      setSize({ width: next.width, height: next.height });
+    });
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [isFloating, closed]);
+  useEffect(() => {
+    if (!isFloating || !position || !size || isMinimized) return;
+    try {
+      localStorage.setItem(
+        "qterminal-agent-geometry",
+        JSON.stringify({ x: position.left, y: position.top, ...size }),
+      );
+    } catch {}
+  }, [isFloating, position, size, isMinimized]);
+  useEffect(() => {
+    if (chat.conversation && !chat.creatingChat) focusComposer();
+  }, [chat.conversation?.id, chat.creatingChat]);
   const floatingStyle = isFloating
     ? ({
         ...(position
@@ -199,12 +330,27 @@ export function ChatPanel({
       } as CSSProperties)
     : undefined;
 
+  if (closed)
+    return (
+      <button
+        className="agent-reopen"
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerUp={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          setClosed(false);
+        }}
+      >
+        {`Open ${agentName}`}
+      </button>
+    );
   return (
     <aside
       ref={panelRef}
       style={floatingStyle}
       className={`chat-panel${isFloating ? " chat-panel-floating" : ""}${isFloating && isMinimized ? " chat-panel-minimized" : ""}`}
-      aria-label="Wonnyy model chat"
+      aria-label={agentName}
       onPointerDown={(event) => event.stopPropagation()}
       onPointerMove={(event) => event.stopPropagation()}
       onPointerUp={(event) => event.stopPropagation()}
@@ -220,45 +366,134 @@ export function ChatPanel({
         onPointerUp={stopDrag}
         onPointerCancel={stopDrag}
       >
-        <span>WONNYY CHAT</span>
+        <AgentAvatar agent={chat.agent} />
+        <span className="agent-drag-title">
+          {agentName}
+          <span className="agent-chat-subtitle">
+            Strict Context Analysis ·{" "}
+            {chat.runtime.state === "CONTEXT_TOO_LARGE"
+              ? "Over Budget"
+              : chat.unavailableReason
+                ? "Missing Sources"
+                : (chat.contextBoxes.find(
+                    (box) => box.id === chat.conversation?.contextBoxId,
+                  )?.name ?? "No Context")}
+          </span>
+        </span>
         <span className="chat-runtime-status" role="status">
           {statusLabel}
+          {chat.runtime.requestId ? ` · ${elapsed.toFixed(0)}s` : ""}
         </span>
+        {!isFloating && onUndock && (
+          <button title="Undock agent panel" onClick={onUndock}>
+            Undock
+          </button>
+        )}
+        {isFloating && (
+          <button title="Reset panel size and position" onClick={resetGeometry}>
+            Reset
+          </button>
+        )}
+        {variant === "workspace" && (
+          <button disabled={chat.busy} onClick={chat.newChat}>
+            + New Chat
+          </button>
+        )}
+        {onToggleDetails && (
+          <button onClick={onToggleDetails} aria-expanded={detailsOpen}>
+            Context / Details
+          </button>
+        )}
+        {onOpenAgentSettings && variant !== "workspace" && (
+          <button
+            onClick={onOpenAgentSettings}
+            aria-label="Open agent settings"
+          >
+            Settings
+          </button>
+        )}
+        {variant !== "workspace" && onOpenAgentWorkspace && (
+          <button onClick={onOpenAgentWorkspace}>Open in Agent</button>
+        )}
+        {variant !== "workspace" && (
+          <button
+            title={`Close ${agentName}`}
+            className="chat-close-control"
+            aria-label={`Close ${agentName}`}
+            onClick={() => setClosed(true)}
+          >
+            ×
+          </button>
+        )}
         {isFloating && (
           <button
             className="chat-window-control"
             type="button"
-            onClick={() => setIsMinimized(!isMinimized)}
+            onClick={() => {
+              if (isMinimized) {
+                const parent = panelRef.current
+                  ?.offsetParent as HTMLElement | null;
+                if (parent && geometryRef.current) {
+                  const next = clampGeometry(
+                    geometryRef.current,
+                    parent.clientWidth,
+                    parent.clientHeight,
+                  );
+                  setPosition({ left: next.x, top: next.y });
+                  setSize({ width: next.width, height: next.height });
+                }
+              }
+              setIsMinimized(!isMinimized);
+            }}
             aria-label={
               isMinimized ? "Restore chat window" : "Minimize chat window"
             }
+            title={isMinimized ? "Restore chat window" : "Minimize chat window"}
           >
-            {isMinimized ? "□" : "─"}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              aria-hidden="true"
+              focusable="false"
+            >
+              {isMinimized ? (
+                <rect x="3" y="3" width="10" height="10" rx="1" />
+              ) : (
+                <path d="M3 8h10" />
+              )}
+            </svg>
           </button>
         )}
       </div>
-      <div className="chat-context">
+      <details className="chat-context">
+        <summary>Model and attached source details</summary>
         <span>
           {chat.registry?.settings.providerId !== "ollama" && !!chat.registry
-            ? `ONLINE · ${chat.registry?.settings.providerId === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
+            ? `ONLINE · ${chat.registry?.settings.providerId === "openrouter" ? "OpenRouter" : chat.registry?.settings.providerId === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
             : "LOCAL · Ollama"}{" "}
           · {chat.registry?.settings.modelId ?? "Choose a model in Settings"}
         </span>
         <p className="chat-privacy">
           {chat.registry?.settings.providerId !== "ollama" && !!chat.registry
-            ? `Approved source, your question, and included conversation history are sent to ${chat.registry?.settings.providerId === "nvidia" ? "NVIDIA" : "Google Gemini"}.`
+            ? `Approved source, your question, and included conversation history are sent to ${chat.registry?.settings.providerId === "openrouter" ? "OpenRouter and its model providers" : chat.registry?.settings.providerId === "nvidia" ? "NVIDIA" : "Google Gemini"}.`
             : "Inference runs on this device."}
         </p>
         <p className="chat-memory">
           Model memory: up to 12 recent exchanges, fewer when the context limit
-          is reached. Saved history remains available.
+          is reached. Only exchanges using the current source versions are
+          included. Saved history remains available.
           {typeof chat.runtime.diagnostics?.droppedExchanges === "number" &&
           chat.runtime.diagnostics.droppedExchanges > 0
             ? ` Last answer omitted ${chat.runtime.diagnostics.droppedExchanges} earlier exchanges.`
             : ""}
         </p>
         <strong>
-          Active Context:{" "}
+          Attached sources:{" "}
           {chat.context?.sources
             .map((source) => source.relativePath)
             .join(", ") ?? "None ready"}
@@ -272,33 +507,57 @@ export function ChatPanel({
             <button
               disabled={chat.busy}
               onClick={() => {
-                chat.resume();
+                if (chat.conversation?.contextBoxId) chat.resume();
+                else chat.newChat();
                 focusComposer();
               }}
             >
-              Resume with this source
+              {chat.conversation.contextBoxId
+                ? "Recheck attached sources"
+                : "Create bound chat"}
             </button>
           </div>
         )}
         {chat.unavailableReason && <p>{chat.unavailableReason}</p>}
-        {chat.unavailableReason?.includes("changed") && (
-          <button
-            disabled={chat.busy}
-            onClick={async () => {
-              if (
-                await confirm(
-                  "Approve the current file version? A new conversation will use the changed source.",
-                  "Approve updated source",
-                )
-              )
-                chat.refreshSource();
-            }}
-          >
-            Approve updated source
-          </button>
-        )}
+      </details>
+      <div className="agent-provider-indicator">
+        {chat.registry?.settings.providerId === "ollama"
+          ? "LOCAL / Ollama"
+          : chat.registry
+            ? "ONLINE / " +
+              (chat.registry.settings.providerId === "openrouter"
+                ? "OpenRouter"
+                : chat.registry.settings.providerId === "nvidia"
+                  ? "NVIDIA"
+                  : "Gemini")
+            : "Checking provider"}{" "}
+        / {chat.context?.sources.length ?? 0} attached{" "}
+        {chat.context?.sources.length === 1 ? "file" : "files"}
       </div>
-      <ConversationHistory chat={chat} onCompose={focusComposer} />
+      <ConversationHistory
+        chat={chat}
+        onCompose={focusComposer}
+        workspace={variant === "workspace"}
+        onManageContext={onExpandContext}
+      />
+      {chat.unavailableReason && (
+        <div className="chat-notice" role="status">
+          {chat.unavailableReason}
+          <button disabled={chat.busy} onClick={chat.newChat}>
+            Create bound chat
+          </button>
+        </div>
+      )}
+      {!chat.conversation && (
+        <div className="agent-welcome">
+          <strong>{agentName}</strong>
+          <p>Analyze only the knowledge you explicitly attach.</p>
+          <p>
+            Create a box in Planet View’s context manager, or choose an existing
+            box to begin.
+          </p>
+        </div>
+      )}
       <div
         className="chat-thread"
         ref={threadRef}
@@ -310,9 +569,9 @@ export function ChatPanel({
               node.scrollHeight - node.scrollTop - node.clientHeight < 45;
         }}
       >
-        {!messages.length && (
+        {!!chat.conversation && !messages.length && (
           <p className="chat-message-system">
-            Ask a question about the approved Markdown source.
+            Ask a question about the approved sources.
           </p>
         )}
         {transcript.map(({ message, modelChanged, attempt }) => (
@@ -323,15 +582,28 @@ export function ChatPanel({
             {modelChanged && (
               <div className="chat-model-boundary">
                 Model changed to{" "}
-                {message.provider === "gemini" || message.provider === "nvidia"
-                  ? `ONLINE · ${message.provider === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
+                {message.provider === "gemini" ||
+                message.provider === "nvidia" ||
+                message.provider === "openrouter"
+                  ? `ONLINE · ${message.provider === "openrouter" ? "OpenRouter" : message.provider === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
                   : "LOCAL · Ollama"}{" "}
                 · {message.model}
               </div>
             )}
-            <span className="chat-message-role">
-              {message.role === "user" ? "YOU" : "WONNYY"}
-            </span>
+            <div className="chat-message-meta">
+              <span className="chat-message-role">
+                {message.role === "assistant" && (
+                  <AgentAvatar agent={chat.agent} />
+                )}
+                {message.role === "user" ? "YOU" : agentName}
+              </span>
+              <time dateTime={message.createdAt}>
+                {new Date(message.createdAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </time>
+            </div>
             <p>
               {message.role === "assistant"
                 ? message.content
@@ -361,13 +633,19 @@ export function ChatPanel({
                       : "Response failed"}
                 </span>
               )}
+            {message.contextBox && (
+              <small className="chat-context-provenance">
+                Context: {message.contextBox.name} / revision{" "}
+                {message.contextBox.revision}
+              </small>
+            )}
             {message.sources?.length ? (
               <div className="chat-sources">
-                <span>SOURCE</span>
+                <span>SOURCES USED · {message.sources.length}</span>
                 {message.sources.map((source) => (
                   <button
                     key={source.sourceId}
-                    title={`SHA-256 ${source.contentHash}`}
+                    title={`Version used: SHA-256 ${source.contentHash}. Opens the current file; historical source text is not stored.`}
                     onClick={() => onOpenSource(source.relativePath)}
                   >
                     {source.relativePath}
@@ -388,12 +666,66 @@ export function ChatPanel({
             aria-label="Provisional response"
           >
             <span className="chat-message-role">
-              {chat.runtime.content ? "WONNYY · IN PROGRESS" : statusLabel}
+              {chat.runtime.content
+                ? `${agentName} · IN PROGRESS`
+                : statusLabel}
             </span>
-            <p>{chat.runtime.content || "Preparing your response…"}</p>
+            <p>
+              {chat.runtime.content ||
+                chat.runtime.status?.message ||
+                statusLabel}
+            </p>
+            {progress && (
+              <small>
+                {progress.current}
+                {progress.total !== undefined
+                  ? " / " + progress.total
+                  : ""}{" "}
+                {progress.unit}
+              </small>
+            )}
+            {!!chat.runtime.status?.context?.estimatedTokens && (
+              <small>
+                {" "}
+                · ~
+                {chat.runtime.status.context.estimatedTokens.toLocaleString()}{" "}
+                tokens estimated
+              </small>
+            )}
           </article>
         )}
       </div>
+      {pulling && (
+        <div className="chat-notice" role="status">
+          DOWNLOADING MODEL · {pulling.model} · {pulling.message}
+          <button onClick={() => chat.cancelPull(pulling.model)}>CANCEL</button>
+        </div>
+      )}
+      {chat.runtime.state === "MODEL_MISSING" &&
+        chat.registry?.settings.providerId === "ollama" && (
+          <div className="chat-notice">
+            <button
+              disabled={!!pulling || chat.busy}
+              onClick={() =>
+                void chat.downloadModel(
+                  chat.registry?.settings.modelId ?? "qwen3:4b",
+                )
+              }
+            >
+              DOWNLOAD MODEL · {chat.registry?.settings.modelId ?? "qwen3:4b"}
+            </button>
+          </div>
+        )}
+      {chat.runtime.state === "CONTEXT_INSUFFICIENT" && (
+        <div className="chat-notice" role="status">
+          CONTEXT INSUFFICIENT · Add the missing evidence to this Context Box,
+          or explicitly switch boxes before your next message. Checked:{" "}
+          {chat.context?.sources.map((s) => s.relativePath).join(", ")}
+          {onExpandContext && (
+            <button onClick={onExpandContext}>REVIEW CONTEXT</button>
+          )}
+        </div>
+      )}
       <form className="chat-composer" onSubmit={submit}>
         <textarea
           ref={composerRef}
@@ -411,7 +743,7 @@ export function ChatPanel({
             event.preventDefault();
             if (!chat.busy) event.currentTarget.form?.requestSubmit();
           }}
-          placeholder="Ask about Active Context…"
+          placeholder="Ask about the attached Context Box…"
           aria-label="Chat question"
         />
         {chat.runtime.requestId ? (
@@ -427,7 +759,9 @@ export function ChatPanel({
         ) : (
           <button
             type="submit"
-            disabled={chat.busy || !chat.draft.trim()}
+            disabled={
+              chat.busy || !!pulling || !chat.canSend || !chat.draft.trim()
+            }
             aria-label="Send message"
           >
             ↑
@@ -435,10 +769,14 @@ export function ChatPanel({
         )}
       </form>
       {error && (
-        <div className="chat-notice chat-error" role="alert">
+        <div
+          className={neutral ? "chat-notice" : "chat-notice chat-error"}
+          role={neutral ? "status" : "alert"}
+        >
           <span>{error}</span>
-          {latest &&
-            ["failed", "cancelled", "interrupted"].includes(latest.status) && (
+          {!neutral &&
+            latest &&
+            ["failed", "interrupted"].includes(latest.status) && (
               <button
                 onClick={chat.retry}
                 disabled={chat.busy || !chat.attached}
@@ -448,19 +786,68 @@ export function ChatPanel({
             )}
         </div>
       )}
-      {isFloating && !isMinimized && (
-        <div
-          className="chat-resize-handle"
-          role="separator"
-          aria-label="Resize chat window"
-          aria-orientation="horizontal"
-          onPointerDown={startResize}
-          onPointerMove={resize}
-          onPointerUp={stopResize}
-          onPointerCancel={stopResize}
-        />
-      )}
-      {confirmation}
+      {isFloating &&
+        !isMinimized &&
+        (["n", "s", "w", "e", "nw", "ne", "sw", "se"] as ResizeDirection[]).map(
+          (direction) => (
+            <div
+              key={direction}
+              className={"agent-resize agent-resize-" + direction}
+              role="separator"
+              tabIndex={0}
+              aria-label={"Resize chat " + direction}
+              aria-valuenow={Math.round(
+                direction.includes("e") || direction.includes("w")
+                  ? (size?.width ?? 440)
+                  : (size?.height ?? 560),
+              )}
+              onPointerDown={(event) => startResize(event, direction)}
+              onPointerMove={resize}
+              onPointerUp={stopResize}
+              onPointerCancel={stopResize}
+              onLostPointerCapture={() => {
+                resizeRef.current = null;
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Home") {
+                  event.preventDefault();
+                  resetGeometry();
+                  return;
+                }
+                if (
+                  !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
+                    event.key,
+                  ) ||
+                  !position ||
+                  !size
+                )
+                  return;
+                event.preventDefault();
+                const parent = panelRef.current
+                  ?.offsetParent as HTMLElement | null;
+                if (!parent) return;
+                const g = resizeGeometry(
+                  { x: position.left, y: position.top, ...size },
+                  direction,
+                  event.key === "ArrowLeft"
+                    ? -20
+                    : event.key === "ArrowRight"
+                      ? 20
+                      : 0,
+                  event.key === "ArrowUp"
+                    ? -20
+                    : event.key === "ArrowDown"
+                      ? 20
+                      : 0,
+                  parent.clientWidth,
+                  parent.clientHeight,
+                );
+                setPosition({ left: g.x, top: g.y });
+                setSize({ width: g.width, height: g.height });
+              }}
+            />
+          ),
+        )}
     </aside>
   );
 }

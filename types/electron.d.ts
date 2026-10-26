@@ -42,6 +42,8 @@ export type VaultPdfFile = {
   relativePath: string;
   size: number;
   data: Uint8Array;
+  textStatus?: "ready" | "empty" | "error" | "too-large";
+  pageCount?: number | null;
 };
 
 export type VaultSearchResult = {

@@ -12,8 +12,117 @@ const { budgetHistory } = require("./history-budget.cjs");
 const { answerPrefix, validateAnswer } = require("./response-validation.cjs");
 
 const scopeInput = { activeStationIds: [], matchMode: "any" };
+test("agent-bound creation and inference isolate CHronoZ identity, settings, history and duplicate IDs", async (t) => {
+  const f = await fixture(t);
+  const { AgentStore } = require("./agent-store.cjs");
+  f.service.agents = new AgentStore(path.join(f.root, "profiles"));
+  await f.service.agents.save({
+    id: "wonnyy-agent",
+    customInstructions: "WONNYY_ONLY_PREF: Use numbered findings.",
+  });
+  const creationId = randomUUID();
+  const chrono = await f.service.create(f.root, {
+    contextBoxId: f.conversation.contextBoxId,
+    creationId,
+    agentId: "chronoz",
+  });
+  assert.equal(chrono.agentId, "chronoz");
+  assert.equal(
+    (
+      await f.service.create(f.root, {
+        contextBoxId: chrono.contextBoxId,
+        creationId,
+        agentId: "chronoz",
+      })
+    ).id,
+    chrono.id,
+  );
+  await assert.rejects(
+    f.service.create(f.root, {
+      contextBoxId: chrono.contextBoxId,
+      creationId,
+      agentId: "wonnyy-agent",
+    }),
+    { code: "MODEL_INVALID_REQUEST" },
+  );
+  await assert.rejects(
+    f.service.create(f.root, {
+      contextBoxId: chrono.contextBoxId,
+      creationId: randomUUID(),
+      agentId: "unknown",
+    }),
+    { code: "MODEL_INVALID_REQUEST" },
+  );
+  const run = await f.service.run(f.root, 1, f.input(chrono));
+  assert.equal(run.run.diagnostics.agent.id, "chronoz");
+  assert.match(f.calls.at(-1).messages[0].content, /You are CHronoZ/);
+  assert.doesNotMatch(f.calls.at(-1).messages[0].content, /WONNYY_ONLY_PREF/);
+  assert.equal(
+    (await f.service.list(f.root)).find((c) => c.id === f.conversation.id)
+      .messages.length,
+    0,
+  );
+  await f.service.run(f.root, 1, f.input());
+  assert.match(f.calls.at(-1).messages[0].content, /WONNYY_ONLY_PREF/);
+  assert.equal(
+    (await f.service.list(f.root)).find((c) => c.id === chrono.id).messages
+      .length,
+    2,
+  );
+});
 const repeatedSummary =
   "The document describes the company, its customer segments, trading products, custody services, wallet infrastructure, revenue sources, research observations, and operating risks. It provides an overview of the business and its financial metrics.";
+
+test("legacy agent association normalizes without rewrites and subsequent runs capture custom-policy provenance", async (t) => {
+  const f = await fixture(t);
+  const file = path.join(
+    f.root,
+    ".wonnyy",
+    "conversations",
+    f.conversation.id + ".json",
+  );
+  const raw = JSON.parse(await fs.readFile(file, "utf8"));
+  delete raw.agentId;
+  await fs.writeFile(file, JSON.stringify(raw));
+  const original = await fs.readFile(file, "utf8");
+  for (let i = 0; i < 2; i++) {
+    const list = await f.service.list(f.root);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].agentId, "wonnyy-agent");
+  }
+  assert.equal(await fs.readFile(file, "utf8"), original);
+  const { AgentStore } = require("./agent-store.cjs");
+  f.service.agents = new AgentStore(path.join(f.root, "agent-settings"));
+  await f.service.agents.save({
+    id: "wonnyy-agent",
+    customInstructions: "Use numbered findings.",
+  });
+  const result = await f.service.run(f.root, 1, f.input());
+  assert.equal(result.run.diagnostics.agent.id, "wonnyy-agent");
+  assert.match(
+    result.run.diagnostics.agent.customInstructionsHash,
+    /^[a-f0-9]{64}$/,
+  );
+  assert.match(f.calls.at(-1).messages[0].content, /Use numbered findings/);
+  assert.doesNotMatch(
+    JSON.stringify(f.calls.at(-1).messages),
+    /The B source only contains BETA/,
+  );
+  assert.equal(
+    JSON.parse(await fs.readFile(file, "utf8")).agentId,
+    "wonnyy-agent",
+  );
+  const oldHash = result.run.diagnostics.agent.customInstructionsHash;
+  await f.service.agents.save({
+    id: "wonnyy-agent",
+    customInstructions: "Be concise.",
+  });
+  assert.equal(
+    (await readModelRun(f.root, result.run.runId)).diagnostics.agent
+      .customInstructionsHash,
+    oldHash,
+  );
+});
 
 test("copied summaries receive one correction for a new question without duplicating history", async (t) => {
   const f = await fixture(t);
@@ -113,14 +222,131 @@ test("repeat requests, repeated questions, and short factual answers remain vali
 });
 const { ModelRuntimeError } = require("./model-errors.cjs");
 
-test("timeout recovery retains one turn, one audit, and resets provisional text", async (t) => {
+test("a box with empty and populated files answers and retries without losing full source provenance", async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(path.join(f.root, "empty.md"), "");
+  const box = await f.service.editBox(f.root, {
+    action: "create",
+    name: "Mixed text",
+    paths: ["a.md", "empty.md"],
+  });
+  const chat = await f.service.create(f.root, {
+    contextBoxId: box.id,
+    creationId: randomUUID(),
+  });
+  const result = await f.service.run(f.root, 1, f.input(chat));
+  assert.equal(result.run.status, "succeeded");
+  assert.deepEqual(
+    result.run.sourcesActuallyRead.map((source) => source.relativePath),
+    ["a.md", "empty.md"],
+  );
+  const envelopes = f.calls[0].messages
+    .slice(1, 3)
+    .map((message) => JSON.parse(message.content));
+  assert.equal(envelopes[1].content, "");
+  assert.match(envelopes[0].content, /ALPHA/);
+  const complete = f.provider.complete;
+  f.provider.complete = async () => {
+    throw new ModelRuntimeError("MODEL_OFFLINE", "Synthetic offline");
+  };
+  const failedRequest = f.input(result.conversation);
+  await assert.rejects(f.service.run(f.root, 1, failedRequest), {
+    code: "MODEL_OFFLINE",
+  });
+  f.provider.complete = complete;
+  const retried = await f.service.run(
+    f.root,
+    1,
+    f.input(result.conversation, { retryOf: failedRequest.requestId }),
+  );
+  assert.equal(retried.conversation.messages.length, 4);
+  assert.equal(retried.conversation.messages[3].sources.length, 2);
+});
+
+test("explicit box switches and membership edits affect future turns only, survive restart, and exclude other evidence", async (t) => {
+  const f = await fixture(t);
+  const first = await f.service.run(f.root, 1, f.input());
+  const oldMessage = structuredClone(first.conversation.messages[1]);
+  const otherBox = await f.service.editBox(f.root, {
+    action: "create",
+    name: "Other",
+    paths: ["b.md"],
+  });
+  const switched = await f.service.switchBox(f.root, {
+    conversationId: f.conversation.id,
+    contextBoxId: otherBox.id,
+  });
+  assert.deepEqual(switched.messages[1], oldMessage);
+  assert.equal(switched.contextTransitions.length, 1);
+  const next = await f.service.run(f.root, 1, f.input(switched));
+  assert.deepEqual(
+    next.run.sourcesActuallyRead.map((source) => source.relativePath),
+    ["b.md"],
+  );
+  assert.doesNotMatch(JSON.stringify(f.calls.at(-1).messages), /ALPHA/);
+  assert.equal(
+    f.calls.at(-1).messages.filter((message) => message.role === "assistant")
+      .length,
+    0,
+  );
+  assert.equal(next.conversation.messages[3].contextBox.id, otherBox.id);
+  await f.service.editBox(f.root, {
+    action: "add",
+    id: otherBox.id,
+    paths: ["a.md"],
+  });
+  const added = await f.service.run(f.root, 1, f.input(next.conversation));
+  assert.equal(added.run.sourcesActuallyRead.length, 2);
+  assert.deepEqual(added.conversation.messages[1], oldMessage);
+  const restart = new ChatService({
+    provider: f.provider,
+    registry: f.registry,
+  });
+  assert.deepEqual((await restart.list(f.root))[0].messages[1], oldMessage);
+  await restart.renameBox(f.root, { id: otherBox.id, name: "Renamed chunk" });
+  assert.equal(
+    (await restart.listBoxes(f.root)).find((box) => box.id === otherBox.id)
+      .name,
+    "Renamed chunk",
+  );
+  await restart.editBox(f.root, { action: "delete", id: otherBox.id });
+  await assert.rejects(restart.run(f.root, 1, f.input(added.conversation)), {
+    code: "MODEL_CONTEXT_INVALID",
+  });
+  assert.equal((await restart.list(f.root))[0].messages.length, 6);
+});
+
+test("schema-two chat reads do not rewrite files; first explicit turn upgrades per-turn provenance", async (t) => {
+  const f = await fixture(t);
+  const first = await f.service.run(f.root, 1, f.input());
+  const { store } = await f.service.store(f.root);
+  const value = structuredClone(first.conversation);
+  value.schemaVersion = 2;
+  for (const message of value.messages) delete message.contextIdentity;
+  for (const attempt of value.attempts) delete attempt.contextIdentity;
+  await store.write(value);
+  const before = await fs.readFile(store.file(value.id), "utf8");
+  const restarted = new ChatService({
+    provider: f.provider,
+    registry: f.registry,
+  });
+  await restarted.list(f.root);
+  assert.equal(await fs.readFile(store.file(value.id), "utf8"), before);
+  const second = await restarted.run(f.root, 1, f.input(value));
+  assert.equal(second.conversation.schemaVersion, 3);
+  assert.equal(
+    second.conversation.messages[1].contextIdentity.id,
+    first.run.contextIdentity.id,
+  );
+});
+
+test("pre-generation timeout recovery retains one turn and one audit", async (t) => {
   for (const phase of ["load", "generation"]) {
     const f = await fixture(t);
     const complete = f.provider.complete;
     let attempts = 0;
     const failOnce = async (request) => {
       if (++attempts === 1) {
-        request?.onContent?.('{"answer":"Rejected partial');
         throw new ModelRuntimeError("MODEL_TIMEOUT", "Slow model");
       }
       return request ? complete(request) : undefined;
@@ -263,7 +489,7 @@ async function fixture(t) {
     "The B source only contains BETA.",
   );
   await stations.addContext(root, ["a.md"]);
-  const conversation = await service.create(root, scopeInput);
+  const conversation = await createBound(service, root, scopeInput);
   const input = (chat = conversation, extra = {}) => ({
     ...scopeInput,
     conversationId: chat.id,
@@ -295,16 +521,15 @@ test("backend owns ten-turn history, model switching, duplicate delivery, and so
   );
   await stations.clearContext(f.root);
   await stations.addContext(f.root, ["b.md"]);
-  await assert.rejects(f.service.run(f.root, 1, f.input()), {
-    code: "MODEL_CONTEXT_INVALID",
-  });
-  const second = await f.service.create(f.root, scopeInput);
+  await f.service.run(f.root, 1, f.input());
+  assert.ok(JSON.stringify(f.calls.at(-1).messages).includes("ALPHA"));
+  const second = await createBound(f.service, f.root, scopeInput);
   await f.service.run(f.root, 1, f.input(second));
   assert.equal(f.calls.at(-1).messages.length, 3);
   assert.ok(!JSON.stringify(f.calls.at(-1).messages).includes("ALPHA"));
   await f.service.resume(f.root, f.conversation.id);
   assert.equal(
-    (await f.service.context(f.root, scopeInput)).id,
+    (await f.service.checkConversation(f.root, f.conversation.id)).id,
     f.conversation.contextIdentity.id,
   );
   const other = path.join(f.root, "another-vault");
@@ -312,22 +537,27 @@ test("backend owns ten-turn history, model switching, duplicate delivery, and so
   await assert.rejects(f.service.run(other, 1, f.input()));
 });
 
-test("source changes require explicit approval and old hashes cannot resume", async (t) => {
+test("box turns use latest contents while saved historical evidence stays unchanged", async (t) => {
   const f = await fixture(t);
+  const first = await f.service.run(f.root, 1, f.input());
   await fs.writeFile(path.join(f.root, "a.md"), "A revised version.");
-  await assert.rejects(f.service.run(f.root, 1, f.input()), {
-    code: "MODEL_CONTEXT_INVALID",
-  });
-  await assert.rejects(f.service.resume(f.root, f.conversation.id), {
-    code: "BRAIN_SOURCE_CHANGED",
-  });
-  await f.service.refreshSource(f.root);
-  const revised = await f.service.create(f.root, scopeInput);
-  assert.notEqual(
-    revised.contextIdentity.id,
-    f.conversation.contextIdentity.id,
+  const second = await f.service.run(f.root, 1, f.input());
+  assert.notEqual(second.run.contextIdentity.id, first.run.contextIdentity.id);
+  assert.equal(second.run.diagnostics.contextChanged, true);
+  assert.deepEqual(
+    second.conversation.messages[1].sources,
+    first.run.sourcesActuallyRead,
   );
-  assert.equal(f.calls.length, 0);
+  assert.deepEqual(
+    second.conversation.messages[3].sources,
+    second.run.sourcesActuallyRead,
+  );
+  assert.equal(
+    f.calls.at(-1).messages.filter((message) => message.role === "assistant")
+      .length,
+    0,
+  );
+  await f.service.resume(f.root, f.conversation.id);
 });
 
 test("cancellation is owner-bound, prevents duplicates, and permits an immediate retry", async (t) => {
@@ -411,6 +641,7 @@ test("unrecorded pending turns become interrupted and corrupt snapshots remain i
       runId: randomUUID(),
       userMessageId,
       status: "pending",
+      contextIdentity: value.contextIdentity,
     });
   });
   const restarted = new ChatService({
@@ -503,7 +734,7 @@ test("knowledge changes reserve admission before awaiting cancellation", async (
   await assert.rejects(f.service.run(f.root, 1, f.input()), {
     code: "MODEL_BUSY",
   });
-  await assert.rejects(f.service.create(f.root, scopeInput), {
+  await assert.rejects(createBound(f.service, f.root, scopeInput), {
     code: "MODEL_BUSY",
   });
   release();
@@ -534,7 +765,7 @@ test("vault changes wait for in-flight mutations and keep admission reserved thr
   });
   // Attach handlers before releasing the blocked scan, including on regressions.
   const results = Promise.allSettled([scanning, switching, refreshing]);
-  await assert.rejects(f.service.create(f.root, scopeInput), {
+  await assert.rejects(createBound(f.service, f.root, scopeInput), {
     code: "MODEL_BUSY",
   });
   release();
@@ -682,7 +913,7 @@ test("approved Station source sets reach prompts, preserve provenance and resume
   );
   await stations.clearContext(f.root);
   const selection = { activeStationIds: [stationId], matchMode: "any" };
-  await assert.rejects(f.service.create(f.root, selection), {
+  await assert.rejects(createBound(f.service, f.root, selection), {
     code: "MODEL_CONTEXT_INVALID",
   });
   const scope = await stations.prepareBrainScope(f.root, {
@@ -694,7 +925,7 @@ test("approved Station source sets reach prompts, preserve provenance and resume
     scope.sources.map((s) => s.relativePath),
   );
   await stations.addContext(f.root, preview.files);
-  const chat = await f.service.create(f.root, selection);
+  const chat = await createBound(f.service, f.root, selection);
   const result = await f.service.run(f.root, 1, f.input(chat, selection));
   assert.deepEqual(
     result.run.sourcesActuallyRead.map((s) => s.relativePath),
@@ -714,7 +945,7 @@ test("approved Station source sets reach prompts, preserve provenance and resume
   assert.equal(result.run.diagnostics.datasetAnalysis.results[0].rowCount, 1);
   assert.doesNotMatch(JSON.stringify(f.calls[0].messages), /BETA/);
   await stations.setAssignments(f.root, ["b.md"], stationId, true);
-  const unchanged = await f.service.create(f.root, selection);
+  const unchanged = await createBound(f.service, f.root, selection);
   assert.equal(
     unchanged.contextIdentity.id,
     chat.contextIdentity.id,
@@ -750,20 +981,19 @@ test("approved Station source sets reach prompts, preserve provenance and resume
     (await stations.getStationState(f.root)).activeContext.map(
       (s) => s.relativePath,
     ),
-    ["a.md", "numbers.csv"],
+    ["b.md"],
+    "opening a chat does not replace global approval",
   );
   await fs.writeFile(
     path.join(f.root, "numbers.csv"),
     "asset,weight\nbonds,90",
   );
-  await assert.rejects(restarted.run(f.root, 1, f.input(chat, selection)), {
-    code: "MODEL_CONTEXT_INVALID",
-  });
+  const changed = await restarted.run(f.root, 1, f.input(chat, selection));
+  assert.notEqual(changed.run.contextIdentity.id, chat.contextIdentity.id);
+  assert.equal(changed.run.diagnostics.contextChanged, true);
   await stations.clearContext(f.root);
   await stations.addContext(f.root, ["b.md"]);
-  await assert.rejects(restarted.resume(f.root, chat.id), {
-    code: "BRAIN_SOURCE_CHANGED",
-  });
+  await restarted.resume(f.root, chat.id);
   assert.deepEqual(
     (await stations.getStationState(f.root)).activeContext.map(
       (s) => s.relativePath,
@@ -778,7 +1008,7 @@ test("PDF text context uses extracted hashes and can be resumed", async (t) => {
   const { cmapPdf } = require("../../scripts/fixtures/cmap-pdf.cjs");
   await fs.writeFile(path.join(f.root, "mapped.pdf"), cmapPdf());
   await stations.addContext(f.root, ["mapped.pdf"]);
-  const chat = await f.service.create(f.root, scopeInput);
+  const chat = await createBound(f.service, f.root, scopeInput);
   const result = await f.service.run(f.root, 1, f.input(chat));
   assert.equal(result.run.sourcesActuallyRead.length, 2);
   const pdf = JSON.parse(f.calls[0].messages[2].content);
@@ -788,6 +1018,138 @@ test("PDF text context uses extracted hashes and can be resumed", async (t) => {
   await f.service.resume(f.root, chat.id);
   assert.equal(
     (await stations.getStationState(f.root)).activeContext.length,
-    2,
+    0,
   );
 });
+
+test("a timeout after partial output never starts a second generation", async (t) => {
+  const f = await fixture(t);
+  let calls = 0;
+  f.provider.complete = async (request) => {
+    calls++;
+    request.onContent('{"answer":"Partial');
+    throw new ModelRuntimeError("MODEL_TIMEOUT", "Stream stalled");
+  };
+  await assert.rejects(f.service.run(f.root, 1, f.input()), {
+    code: "MODEL_TIMEOUT",
+  });
+  assert.equal(calls, 1);
+  assert.equal(f.service.active, null);
+});
+
+test("model-reported context insufficiency is completed once with source provenance", async (t) => {
+  const f = await fixture(t);
+  let calls = 0;
+  f.provider.complete = async () => {
+    calls++;
+    return {
+      model: "qwen3:4b",
+      content: JSON.stringify({
+        answer:
+          "CONTEXT INSUFFICIENT: The selected sources do not establish this fact.",
+      }),
+      finishReason: "stop",
+    };
+  };
+  const events = [];
+  const result = await f.service.run(f.root, 1, f.input(), (event) =>
+    events.push(event),
+  );
+  assert.equal(calls, 1);
+  assert.equal(result.run.status, "succeeded");
+  assert.equal(result.run.diagnostics.contextInsufficient, true);
+  assert.equal(result.run.sourcesActuallyRead.length, 1);
+  assert.equal(events.at(-1).state, "CONTEXT_INSUFFICIENT");
+});
+
+test("the orchestrator bounds remote provider retries at two attempts", async (t) => {
+  const f = await fixture(t);
+  let calls = 0;
+  f.provider.complete = async () => {
+    calls++;
+    throw new ModelRuntimeError("REMOTE_SERVER_ERROR", "Unavailable");
+  };
+  await assert.rejects(f.service.run(f.root, 1, f.input()), {
+    code: "REMOTE_SERVER_ERROR",
+  });
+  assert.equal(calls, 2);
+});
+
+test("missing models never trigger an implicit pull or generation", async (t) => {
+  const f = await fixture(t);
+  let pulls = 0;
+  f.provider.pull = async () => {
+    pulls++;
+  };
+  f.provider.listModels = async () => [];
+  for (let i = 0; i < 2; i++)
+    await assert.rejects(f.service.run(f.root, 1, f.input()), {
+      code: "MODEL_NOT_FOUND",
+    });
+  assert.equal(pulls, 0);
+  assert.equal(f.calls.length, 0);
+});
+
+test("repeated context abstention never invokes answer repair", () => {
+  const answer =
+    "CONTEXT INSUFFICIENT: " +
+    "The approved source does not establish the requested information. ".repeat(
+      4,
+    );
+  assert.equal(
+    validateAnswer(
+      { finishReason: "stop", content: JSON.stringify({ answer }) },
+      "A different question",
+      [
+        { role: "user", content: "Earlier question" },
+        { role: "assistant", content: answer },
+      ],
+    ),
+    answer.trim(),
+  );
+});
+
+test("a PDF-only chat supplies page-aware text and keeps verified PDF provenance", async (t) => {
+  const f = await fixture(t);
+  const { textPdf } = require("../../scripts/fixtures/text-pdf.cjs");
+  await fs.writeFile(
+    path.join(f.root, "report.pdf"),
+    textPdf([["Revenue was 120 million."], ["Costs were 80 million."]]),
+  );
+  await stations.clearContext(f.root);
+  await stations.addContext(f.root, ["report.pdf"]);
+  const conversation = await createBound(f.service, f.root, scopeInput);
+  const result = await f.service.run(
+    f.root,
+    1,
+    f.input(conversation, {
+      userMessage: "Interpret the report and cite its pages.",
+    }),
+  );
+  const source = JSON.parse(f.calls[0].messages[1].content);
+  assert.equal(source.type, "pdf");
+  assert.match(source.content, /\[PDF page 1\]\nRevenue was 120 million/);
+  assert.match(source.content, /\[PDF page 2\]\nCosts were 80 million/);
+  assert.match(
+    f.calls[0].messages[0].content,
+    /cite the filename and supplied page number/,
+  );
+  assert.equal(
+    result.run.sourcesActuallyRead[0].contentHash,
+    source.contentHash,
+  );
+  assert.equal(
+    result.conversation.messages.at(-1).sources[0].relativePath,
+    "report.pdf",
+  );
+});
+
+async function createBound(service, root, _scope) {
+  const box = await service.saveBox(root, {
+    name: "Test " + require("node:crypto").randomUUID(),
+  });
+  return service.create(root, {
+    contextBoxId: box.id,
+    creationId: require("node:crypto").randomUUID(),
+  });
+}

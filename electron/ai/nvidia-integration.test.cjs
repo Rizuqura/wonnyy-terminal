@@ -37,7 +37,7 @@ test("NVIDIA preserves source isolation, bounded history, identity, retry and re
   await stations.addContext(root, ["a.md"]);
   let service = new ChatService({ registry, provider });
   const scope = { activeStationIds: [], matchMode: "any" };
-  const alpha = await service.create(root, scope);
+  const alpha = await createBound(service, root, scope);
   const input = (chat) => ({
     ...scope,
     conversationId: chat.id,
@@ -75,7 +75,7 @@ test("NVIDIA preserves source isolation, bounded history, identity, retry and re
   );
   await stations.clearContext(root);
   await stations.addContext(root, ["b.md"]);
-  const beta = await service.create(root, scope);
+  const beta = await createBound(service, root, scope);
   for (let i = 0; i < 10; i++) result = await service.run(root, 1, input(beta));
   assert.doesNotMatch(JSON.stringify(state.requests.at(-1)), /ALPHA|25%/);
   service = new ChatService({ registry, provider });
@@ -90,3 +90,13 @@ test("NVIDIA preserves source isolation, bounded history, identity, retry and re
       /nvapi-synthetic-smoke-key|Hidden reasoning/,
     );
 });
+
+async function createBound(service, root, _scope) {
+  const box = await service.saveBox(root, {
+    name: "Test " + require("node:crypto").randomUUID(),
+  });
+  return service.create(root, {
+    contextBoxId: box.id,
+    creationId: require("node:crypto").randomUUID(),
+  });
+}

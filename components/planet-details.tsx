@@ -85,7 +85,7 @@ export function PlanetDetails({ selected, graph, onOpenFile, onExplore }: Readon
             </div>
           ) : null}
           <div className="pd-rule" />
-          {isAsteroid ? <p className="pd-empty">This file is mapped for structure only and cannot be opened in Wonnyy.</p> : <button className="pd-action" onClick={() => onOpenFile(selected.id)}>OPEN ⏎</button>}
+          {isAsteroid ? <p className="pd-empty">This file is mapped for structure only and cannot be opened in QTerminal.</p> : <button className="pd-action" onClick={() => onOpenFile(selected.id)}>OPEN ⏎</button>}
         </>
       )}
     </div>

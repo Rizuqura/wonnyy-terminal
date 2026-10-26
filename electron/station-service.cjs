@@ -1,7 +1,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { getIndexedPdfText, readVaultFile, scanVault } = require("./vault-service.cjs");
+const { getIndexedPdfText, readIndexedPdfText, getVaultSnapshot, readVaultFile, scanVault } = require("./vault-service.cjs");
 const { BRAIN_ERROR_CODES, BrainScopeError } = require("./brain-errors.cjs");
 
 const SCHEMA_VERSION = 1;
@@ -123,6 +123,33 @@ function setAssignments(rootPath, relativePaths, stationId, assigned) {
 }
 
 function collectFiles(entry, output = []) { if (entry.kind === "file" && SUPPORTED.has(entry.extension)) output.push(entry.relativePath); for (const child of entry.children ?? []) collectFiles(child, output); return output; }
+async function previewBoxSelection(rootPath, relativePaths) {
+  if (!Array.isArray(relativePaths) || relativePaths.length > 1000) throw new Error("Choose up to 1000 vault objects.");
+  const known = flatten((await scanVault(rootPath)).entries), selected = new Set(), skipped = new Set();
+  function visit(entry) {
+    if (entry.kind === "folder") { for (const child of entry.children ?? []) visit(child); }
+    else if (SUPPORTED.has(entry.extension)) selected.add(entry.relativePath);
+    else skipped.add(entry.relativePath);
+  }
+  for (const relativePath of relativePaths) {
+    resolveKnowledgeObject(rootPath, relativePath);
+    const entry = known.get(relativePath);
+    if (entry) visit(entry); else skipped.add(relativePath);
+  }
+  return { files: [...selected].sort(), skipped: [...skipped].sort() };
+}
+async function inspectBoxSources(rootPath, items) {
+  const known = flatten((await scanVault(rootPath)).entries);
+  return Promise.all(items.map(async item => {
+    resolveKnowledgeObject(rootPath, item.relativePath);
+    const entry = known.get(item.relativePath);
+    try {
+      if (!entry || entry.kind !== "file" || !SUPPORTED.has(entry.extension)) throw new Error("Missing or unsupported file. Remove or relink this membership.");
+      const source = await readableSource(rootPath, entry, new Map(), new Map(), null);
+      return { ...item, status: "ready", contentHash: source.contentHash, estimatedTokens: source.estimatedTokens, type: source.type };
+    } catch (error) { return { ...item, status: "unavailable", message: error.message }; }
+  }));
+}
 async function previewContext(rootPath, relativePaths) {
   const known = flatten((await scanVault(rootPath)).entries); const files = [];
   for (const relativePath of [...new Set(relativePaths)]) { const entry = known.get(relativePath); if (!entry) throw new Error(`Knowledge object not found: ${relativePath}`); if (entry.kind === "folder") files.push(...collectFiles(entry)); else if (SUPPORTED.has(entry.extension)) files.push(relativePath); }
@@ -173,7 +200,7 @@ async function buildContextPackage(rootPath) {
 
 async function readableSource(rootPath, entry, assignmentMap, stationMap, recordedContext) {
   const extension = entry.extension.toLowerCase();
-  const content = extension === ".pdf" ? getIndexedPdfText(rootPath, entry.relativePath) ?? "" : (await readVaultFile(rootPath, entry.relativePath)).content;
+  const content = extension === ".pdf" ? await readIndexedPdfText(rootPath, entry.relativePath) : (await readVaultFile(rootPath, entry.relativePath)).content;
   const contentHash = crypto.createHash("sha256").update(content).digest("hex");
   const recorded = recordedContext?.get(entry.relativePath);
   return {
@@ -246,12 +273,14 @@ function scopeManifestVersion(documentRevision, mode, matchMode, activeStationId
   return crypto.createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
 }
 
-async function prepareBrainScope(rootPath, rawInput) {
+async function prepareBrainScope(rootPath, rawInput, approvedManifest = null, latest = false) {
+  if (approvedManifest && !approvedManifest.length) throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "This Context Box is empty. Add supported files before starting a chat.");
+  if (latest) await scanVault(rootPath);
   const input = validateScopeRequest(rawInput);
   const { ownerId, matchMode } = input;
   const loaded = await load(rootPath);
   if (loaded.error) throw new BrainScopeError(BRAIN_ERROR_CODES.VAULT_UNAVAILABLE, loaded.error);
-  const snapshot = await scanVault(rootPath);
+  const snapshot = await getVaultSnapshot(rootPath);
   if (snapshot.status !== "ready") throw new BrainScopeError(BRAIN_ERROR_CODES.VAULT_UNAVAILABLE, snapshot.message || "Vault is unavailable.");
   const known = flatten(snapshot.entries);
   const stationMap = new Map(loaded.document.stations.map((station) => [station.id, station.name]));
@@ -265,15 +294,16 @@ async function prepareBrainScope(rootPath, rawInput) {
   }
   const activeStationIds = input.activeStationIds;
   const assignmentMap = new Map(loaded.document.assignments.map((item) => [item.relativePath, item.stationIds]));
-  const recordedContext = new Map(loaded.document.activeContext.map((item) => [item.relativePath, item]));
+  const activeContext = approvedManifest ? approvedManifest.map(s => ({ relativePath: s.relativePath })) : loaded.document.activeContext;
+  const recordedContext = new Map(activeContext.map((item) => [item.relativePath, item]));
   const selectedPaths = new Set();
   let mode;
   let reason;
 
-  if (loaded.document.activeContext.length > 0) {
+  if (activeContext.length > 0) {
     mode = "active-context";
     reason = "Active Context overrides the current Planet view.";
-    loaded.document.activeContext.forEach((item) => selectedPaths.add(item.relativePath));
+    activeContext.forEach((item) => selectedPaths.add(item.relativePath));
   } else if (activeStationIds.length > 0) {
     mode = "station";
     reason = `${matchMode.toUpperCase()} match across ${activeStationIds.length} active Station${activeStationIds.length === 1 ? "" : "s"}.`;
@@ -298,10 +328,20 @@ async function prepareBrainScope(rootPath, rawInput) {
   const sources = [];
   for (const relativePath of [...filePaths].sort()) {
     const entry = known.get(relativePath);
-    if (entry?.kind === "file" && SUPPORTED.has(entry.extension)) sources.push(await readableSource(rootPath, entry, assignmentMap, stationMap, recordedContext));
+    if (entry?.kind === "file" && SUPPORTED.has(entry.extension)) {
+      try { sources.push(await readableSource(rootPath, entry, assignmentMap, stationMap, recordedContext)); }
+      catch (error) {
+        if (!approvedManifest) throw error;
+        throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "A Context Box source is missing, unreadable or unsupported. Open the box to remove or relink it.");
+      }
+    }
   }
   for (const relativePath of missing.sort()) sources.push({ id: relativePath, relativePath, name: path.basename(relativePath), type: "md", stations: [], estimatedTokens: 0, contentHash: null, missing: true, changed: false });
 
+  if (approvedManifest && (sources.length !== approvedManifest.length || sources.some(source => {
+    const expected = approvedManifest.find(item => item.sourceId === source.id && item.relativePath === source.relativePath);
+    return !expected || source.missing || (!latest && expected.contentHash !== source.contentHash);
+  }))) throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "A Context Box source is missing, unreadable or unsupported. Open the box to remove or relink it.");
   const createdAtMs = Date.now();
   const manifestVersion = scopeManifestVersion(loaded.document.revision, mode, matchMode, activeStationIds, sources);
   const scope = {
@@ -346,13 +386,13 @@ async function readBrainSource(rootPath, rawInput) {
   if (!scope.allowed.has(sourceId)) {
     throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_NOT_AUTHORIZED, "Source is outside the prepared Brain Scope.", { scopeId, sourceId });
   }
-  const snapshot = await scanVault(rootPath);
+  const snapshot = await getVaultSnapshot(rootPath);
   const entry = flatten(snapshot.entries).get(sourceId);
   if (snapshot.status !== "ready" || !entry || entry.kind !== "file" || !SUPPORTED.has(entry.extension)) {
     throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_UNAVAILABLE, "Brain source is missing or unsupported.", { scopeId, sourceId });
   }
   const extension = entry.extension.toLowerCase();
-  const content = extension === ".pdf" ? getIndexedPdfText(rootPath, sourceId) ?? "" : (await readVaultFile(rootPath, sourceId)).content;
+  const content = extension === ".pdf" ? await readIndexedPdfText(rootPath, sourceId) : (await readVaultFile(rootPath, sourceId)).content;
   const contentHash = crypto.createHash("sha256").update(content).digest("hex");
   if (scope.allowed.get(sourceId) !== contentHash) {
     throw new BrainScopeError(BRAIN_ERROR_CODES.SOURCE_CHANGED, "Brain source changed after the scope was prepared. Prepare a fresh scope before reading it.", { scopeId, sourceId });
@@ -367,4 +407,4 @@ async function suggestReattachments(rootPath) {
 }
 function reattach(rootPath, fromPath, toPath) { return mutate(rootPath, async (document) => { const record = document.assignments.find((item) => item.relativePath === fromPath); if (!record) throw new Error("Orphaned assignment not found."); const stats = await fs.stat(resolveKnowledgeObject(rootPath, toPath)); record.relativePath = toPath; record.kind = stats.isDirectory() ? "folder" : "file"; record.fingerprint = await fingerprint(rootPath, toPath, record.kind); document.activeContext = document.activeContext.map((entry) => entry.relativePath === fromPath ? { ...entry, relativePath: toPath } : entry); }); }
 
-module.exports = { addContext, approveChatSource, refreshChatSource, buildContextPackage, clearContext, createStation, deleteStation, getStationState, normalizeName, prepareBrainScope, previewContext, readBrainSource, reattach, removeContext, renameStation, setAssignments, suggestReattachments };
+module.exports = { previewBoxSelection, inspectBoxSources, addContext, approveChatSource, refreshChatSource, buildContextPackage, clearContext, createStation, deleteStation, getStationState, normalizeName, prepareBrainScope, previewContext, readBrainSource, reattach, removeContext, renameStation, setAssignments, suggestReattachments };

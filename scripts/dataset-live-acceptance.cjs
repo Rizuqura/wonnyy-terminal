@@ -57,7 +57,7 @@ async function main() {
   const csv = rows.join("\n");
   await fs.writeFile(path.join(root, "sales.csv"), csv);
   await stations.addContext(root, ["sales.csv"]);
-  const chat = await service.create(root, scope);
+  const chat = await createBound(service, root, scope);
   const report = {
     model,
     csvBytes: Buffer.byteLength(csv),
@@ -134,3 +134,8 @@ main().catch((error) => {
   process.stderr.write(`${error.stack}\n`);
   process.exitCode = 1;
 });
+
+async function createBound(service, root, _scope) {
+  const box = await service.saveBox(root, {name: 'Test '+require('node:crypto').randomUUID()});
+  return service.create(root, {contextBoxId: box.id, creationId: require('node:crypto').randomUUID()});
+}

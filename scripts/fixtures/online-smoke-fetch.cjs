@@ -2,13 +2,157 @@
 function createOnlineSmokeFetch() {
   const state = {
     requests: [],
+    localRequests: [],
     status: 200,
     nvidiaModelStatuses: {},
     checkDelayMs: 0,
+    openrouterCatalogStatus: 200,
+    usageStatus: 200,
+    usageRequests: 0,
+    usageData: {
+      limit: 100,
+      limit_remaining: 74.5,
+      limit_reset: "weekly",
+      usage_weekly: 25.5,
+    },
+  };
+  const datasetPlan = (body) => {
+    const system =
+      body?.messages?.[0]?.content ??
+      body?.systemInstruction?.parts?.[0]?.text ??
+      "";
+    return system.includes("You plan read-only CSV analysis")
+      ? {
+          task: "Inspect approved CSV rows.",
+          queries: [{ sourceId: "details.csv", operation: "rows", limit: 100 }],
+        }
+      : null;
   };
   const fetchImpl = async (url, init = {}) => {
     const endpoint = new URL(url);
     const body = init.body ? JSON.parse(init.body) : null;
+    if (endpoint.hostname === "openrouter.ai") {
+      if (init.headers.Authorization !== "Bearer sk-or-v1-synthetic-smoke-key")
+        return new Response("Invalid key", { status: 401 });
+      if (endpoint.pathname === "/api/v1/key") {
+        state.usageRequests++;
+        return state.usageStatus === 200
+          ? Response.json({ data: state.usageData })
+          : new Response("Synthetic usage failure", {
+              status: state.usageStatus,
+            });
+      }
+      if (!body && state.openrouterCatalogStatus !== 200)
+        return new Response("Synthetic catalog outage", {
+          status: state.openrouterCatalogStatus,
+        });
+      if (!body)
+        return Response.json({
+          data: [
+            {
+              id: "~vendor/model-latest",
+              name: "Router Alias",
+              context_length: 32768,
+            },
+            { id: "invalid catalog row with spaces" },
+            {
+              id: "vendor/route-smoke:free",
+              name: "Router Smoke",
+              context_length: 32768,
+              architecture: {
+                input_modalities: ["text"],
+                output_modalities: ["text"],
+              },
+              top_provider: { max_completion_tokens: 8192 },
+            },
+            {
+              id: "vendor/route-second",
+              name: "Router Second",
+              context_length: 32768,
+              architecture: {
+                input_modalities: ["text"],
+                output_modalities: ["text"],
+              },
+            },
+          ],
+        });
+      state.requests.push(body);
+      if (state.status !== 200)
+        return new Response("Synthetic provider failure", {
+          status: state.status,
+        });
+      const source = JSON.parse(body.messages[1].content);
+      const answer = datasetPlan(body)
+        ? JSON.stringify(datasetPlan(body))
+        : source.sourceId === "wonnyy-model-check"
+          ? "40%"
+          : "ALPHA allocation is 25%.";
+      const encoder = new TextEncoder();
+      let timer;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            const event = (value) =>
+              encoder.encode(`data: ${JSON.stringify(value)}\n\n`);
+            controller.enqueue(encoder.encode(": OPENROUTER PROCESSING\n\n"));
+            controller.enqueue(
+              event({
+                model: body.model,
+                choices: [
+                  {
+                    delta: {
+                      reasoning: "Hidden reasoning",
+                      content: answer.slice(0, 6),
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              }),
+            );
+            timer = setTimeout(
+              () => {
+                controller.enqueue(
+                  event({
+                    model: body.model,
+                    choices: [
+                      {
+                        delta: { content: answer.slice(6) },
+                        finish_reason: "stop",
+                      },
+                    ],
+                  }),
+                );
+                controller.enqueue(
+                  event({
+                    choices: [{ delta: {}, finish_reason: "stop" }],
+                    usage: { prompt_tokens: 99, completion_tokens: 12 },
+                  }),
+                );
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+              source.sourceId === "wonnyy-model-check"
+                ? 50
+                : state.checkDelayMs || 250,
+            );
+            init.signal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                try {
+                  controller.error(init.signal.reason);
+                } catch {}
+              },
+              { once: true },
+            );
+          },
+          cancel() {
+            clearTimeout(timer);
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    }
     if (endpoint.hostname === "integrate.api.nvidia.com") {
       if (init.headers.Authorization !== "Bearer nvapi-synthetic-smoke-key")
         return new Response("Invalid key", { status: 401 });
@@ -61,7 +205,11 @@ function createOnlineSmokeFetch() {
           model: body.model,
           choices: [
             {
-              delta: { content: answer },
+              delta: {
+                content: datasetPlan(body)
+                  ? JSON.stringify(datasetPlan(body))
+                  : answer,
+              },
               finish_reason: "stop",
             },
           ],
@@ -103,7 +251,7 @@ function createOnlineSmokeFetch() {
           : source.content.includes("ALPHA")
             ? "ALPHA allocation is 25%."
             : "BETA allocation is 40%.";
-      const encoded = JSON.stringify({ answer });
+      const encoded = JSON.stringify(datasetPlan(body) ?? { answer });
       const encoder = new TextEncoder();
       return new Response(
         new ReadableStream({
@@ -141,12 +289,17 @@ function createOnlineSmokeFetch() {
       });
     if (endpoint.pathname === "/api/generate")
       return Response.json({ done: true });
+    if (endpoint.pathname === "/api/chat") state.localRequests.push(body);
     return new Response(
       JSON.stringify({
         model: body.model,
         done: true,
         done_reason: "stop",
-        message: { content: '{"answer":"ALPHA allocation is 25%."}' },
+        message: {
+          content: JSON.stringify(
+            datasetPlan(body) ?? { answer: "ALPHA allocation is 25%." },
+          ),
+        },
       }) + "\n",
       { headers: { "content-type": "application/x-ndjson" } },
     );

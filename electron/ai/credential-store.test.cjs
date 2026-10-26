@@ -6,6 +6,35 @@ const path = require("node:path");
 const { CredentialStore } = require("./credential-store.cjs");
 const { parseCredential } = require("./schemas.cjs");
 
+test("OpenRouter keys use encrypted storage and preserve existing provider keys through restart and removal", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "qterminal-openrouter-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const encryption = {
+    isEncryptionAvailable: () => true,
+    encryptString: (key) => Buffer.from([...key].reverse().join("")),
+    decryptString: (bytes) => [...bytes.toString()].reverse().join(""),
+  };
+  const store = new CredentialStore(root, encryption);
+  await store.save({ providerId: "gemini", apiKey: "legacy-gemini-secret" });
+  await store.save({ providerId: "nvidia", apiKey: "nvapi-legacy-secret" });
+  await store.save({
+    providerId: "openrouter",
+    apiKey: "sk-or-v1-synthetic-secret",
+  });
+  assert.doesNotMatch(
+    await fs.readFile(store.file, "utf8"),
+    /sk-or-v1-synthetic-secret|legacy-gemini-secret|nvapi-legacy-secret/,
+  );
+  const restarted = new CredentialStore(root, encryption);
+  assert.equal(await restarted.get("openrouter"), "sk-or-v1-synthetic-secret");
+  await restarted.remove({ providerId: "openrouter" });
+  assert.equal(await restarted.get("gemini"), "legacy-gemini-secret");
+  assert.equal(await restarted.get("nvidia"), "nvapi-legacy-secret");
+  await assert.rejects(restarted.get("openrouter"), { code: "AUTH_REQUIRED" });
+});
+
 test("NVIDIA credentials preserve legacy Gemini storage and remain isolated on removal", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "wonnyy-nvidia-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

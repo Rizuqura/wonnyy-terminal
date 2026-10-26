@@ -16,6 +16,8 @@ export type ModelRequest = {
   onContent?: (content: string) => void;
 };
 export type ModelErrorCode =
+  | "CONTEXT_INSUFFICIENT"
+  | "MODEL_PULL_FAILED"
   | "AUTH_REQUIRED"
   | "AUTH_INVALID"
   | "AUTH_STORAGE_UNAVAILABLE"
@@ -61,6 +63,7 @@ export type LocalModel = {
   parameterSize: string | null;
   quantization: string | null;
   contextLength: number | null;
+  outputLimit?: number | null;
   capabilities: string[];
 };
 export type ModelStatus = {
@@ -140,6 +143,8 @@ export type ContextIdentity = {
   sources: ModelSourceReference[];
 };
 export type ChatMessage = {
+  contextIdentity?: ContextIdentity;
+  contextBox?: { id: string; name: string; revision: number };
   provider?: string;
   id: string;
   conversationId: string;
@@ -158,8 +163,38 @@ export type ChatAttempt = {
   status: "pending" | "succeeded" | "failed" | "cancelled" | "interrupted";
   error: ModelRuntimeErrorValue | null;
 };
+export type ContextBox = {
+  id: string;
+  name: string;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  contextIdentity: ContextIdentity | null;
+  items: ContextBoxItem[];
+};
+export type ContextBoxItem = {
+  id: string;
+  relativePath: string;
+  addedAt: string;
+  status?: "ready" | "unavailable";
+  message?: string;
+  contentHash?: string;
+  estimatedTokens?: number;
+  type?: string;
+};
+export type ContextBoxEdit = {
+  action: "create" | "add" | "remove" | "relink" | "delete";
+  id?: string;
+  name?: string;
+  paths?: string[];
+  itemId?: string;
+  relativePath?: string;
+};
 export type Conversation = {
-  schemaVersion: 1;
+  agentId?: string;
+  schemaVersion: 1 | 2 | 3;
+  contextBoxId?: string;
+  contextBoxRevision?: number;
   id: string;
   title: string;
   createdAt: string;
@@ -168,7 +203,41 @@ export type Conversation = {
   messages: ChatMessage[];
   attempts: ChatAttempt[];
 };
+export type AgentConfig = {
+  id: string;
+  displayName: string;
+  avatar:
+    | { type: "letter"; letter: "W" | "C" }
+    | { type: "local-asset"; assetId: string };
+  avatarUrl: string | null;
+  customInstructions: string;
+  skills: string[];
+  protectedInstructions: string;
+  policyVersion: string;
+  mode: "strict-context-analysis";
+  createdAt: string;
+  updatedAt: string;
+};
+export type RuntimeStatus = {
+  message?: string;
+  startedAt?: number;
+  progress?: { current: number; total?: number; unit: string };
+  context?: { sourceCount: number; estimatedTokens?: number };
+};
+export type ModelPullStatus = RuntimeStatus & {
+  model: string;
+  phase: "model-pulling" | "model-installed" | "cancelled" | "error";
+  error?: string;
+};
 export type ChatState =
+  | "CONTEXT_TOO_LARGE"
+  | "CONTEXT_READING"
+  | "CONTEXT_READY"
+  | "CONTEXT_INSUFFICIENT"
+  | "LIMITED_CONTEXT"
+  | "MODEL_CHECKING"
+  | "MODEL_READY"
+  | "CANCELLED"
   | "REMOTE_CONNECTING"
   | "IDLE"
   | "CONTEXT_NEEDED"
@@ -185,7 +254,7 @@ export type ChatState =
   | "RESTART_REQUIRED";
 export type ModelSettings = {
   schemaVersion: 1;
-  providerId: "ollama" | "gemini" | "nvidia";
+  providerId: "ollama" | "gemini" | "nvidia" | "openrouter";
   modelId: string | null;
   contextWindow: number;
   outputLimit: number;
@@ -208,6 +277,7 @@ export type ModelDescriptor = {
   recommended: boolean;
   capabilities: string[];
   contextLength: number | null;
+  outputLimit?: number | null;
   warnings: string[];
   pricingClass: "unknown";
 };
@@ -253,14 +323,68 @@ export type ChatEvent = {
   conversationId: string;
   runId: string;
   state: ChatState;
+  status?: RuntimeStatus;
   content?: string;
   conversation?: Conversation;
   error?: ModelRuntimeErrorValue;
   diagnostics?: Record<string, unknown>;
 };
+export interface OpenRouterUsageSnapshot {
+  status:
+    | "unconfigured"
+    | "loading"
+    | "ready"
+    | "stale"
+    | "offline"
+    | "unauthorized"
+    | "rate_limited"
+    | "unsupported"
+    | "error";
+  provider: "openrouter";
+  safeKeyAlias: string | null;
+  limitUsd: number | null;
+  remainingUsd: number | null;
+  usedUsdThisPeriod: number | null;
+  resetCadence: "daily" | "weekly" | "monthly" | "none" | "unknown";
+  accountCreditsRemainingUsd: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  tokenMeasurementScope: string | null;
+  dataSource: "current_key" | "management_key" | "local_meter" | "none";
+  fetchedAt: string | null;
+  errorMessage?: string;
+}
 export interface AiBridge {
+  openRouterUsage(input?: {
+    refresh?: boolean;
+  }): Promise<OpenRouterUsageSnapshot>;
+  onUsageChanged(callback: () => void): () => void;
+  getAgent(id?: string): Promise<AgentConfig>;
+  saveAgent(input: {
+    id: string;
+    customInstructions: string;
+    avatarDataUrl?: string | null;
+  }): Promise<AgentConfig>;
+  chooseAgentAvatar(): Promise<string | null>;
+  previewBoxSelection(
+    paths: string[],
+  ): Promise<{ files: string[]; skipped: string[] }>;
+  inspectContextBox(id: string): Promise<ContextBox>;
+  editContextBox(input: ContextBoxEdit): Promise<ContextBox>;
+  switchContextBox(input: {
+    conversationId: string;
+    contextBoxId: string;
+  }): Promise<Conversation>;
+  listContextBoxes(): Promise<ContextBox[]>;
+  saveContextBox(input: { name: string }): Promise<ContextBox>;
+  renameContextBox(input: { id: string; name: string }): Promise<ContextBox>;
+  checkConversation(id: string): Promise<ContextIdentity>;
+  pullModel(model: string): Promise<ModelPullStatus>;
+  pullStatus(): Promise<ModelPullStatus[]>;
+  cancelPull(model: string): Promise<void>;
+  onPull(callback: (status: ModelPullStatus) => void): () => void;
   checkRemoteModel(input: {
-    providerId: "gemini" | "nvidia";
+    providerId: "gemini" | "nvidia" | "openrouter";
     model: string;
   }): Promise<ModelCheckResult>;
   stopModelChecks(): Promise<void>;
@@ -279,15 +403,19 @@ export interface AiBridge {
   models(): Promise<RegistryState>;
   settings(input: Partial<ModelSettings>): Promise<ModelSettings>;
   saveCredential(input: {
-    providerId: "gemini" | "nvidia";
+    providerId: "gemini" | "nvidia" | "openrouter";
     apiKey: string;
   }): Promise<{ configured: boolean; secureStorageAvailable: boolean }>;
   removeCredential(input: {
-    providerId: "gemini" | "nvidia";
+    providerId: "gemini" | "nvidia" | "openrouter";
   }): Promise<{ configured: boolean; secureStorageAvailable: boolean }>;
   context(input: ScopeSelection): Promise<ContextIdentity>;
   listConversations(): Promise<Conversation[]>;
-  createConversation(input: ScopeSelection): Promise<Conversation>;
+  createConversation(input: {
+    agentId?: string;
+    contextBoxId: string;
+    creationId: string;
+  }): Promise<Conversation>;
   renameConversation(input: {
     conversationId: string;
     title: string;
@@ -301,7 +429,7 @@ export interface AiBridge {
   onEvent(callback: (event: ChatEvent) => void): () => void;
 }
 export type ModelCheckResult = {
-  providerId: "gemini" | "nvidia";
+  providerId: "gemini" | "nvidia" | "openrouter";
   model: string;
   passed: boolean;
   latencyMs: number;

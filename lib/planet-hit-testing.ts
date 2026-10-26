@@ -39,9 +39,9 @@ function typePriority(node: KnowledgeNode): number {
 }
 
 function minimumHitRadius(node: KnowledgeNode): number {
-  if (node.type === "directory") return 14;
-  if (node.fileType !== "other") return 11;
-  return 6;
+  if (node.type === "directory") return 18;
+  if (node.fileType !== "other") return 16;
+  return 8;
 }
 
 function rank(left: HitCandidate, right: HitCandidate): number {

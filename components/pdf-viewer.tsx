@@ -112,5 +112,5 @@ export function PdfViewer({ file }: Readonly<{ file: VaultPdfFile }>) {
 
 function pdfErrorMessage(error: unknown, action: string): string {
   const detail = error instanceof Error && error.message ? ` ${error.message}` : "";
-  return `Wonnyy could not ${action}.${detail}`;
+  return `QTerminal could not ${action}.${detail}`;
 }

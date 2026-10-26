@@ -110,3 +110,56 @@ test("PDF indexing loads local character maps for non-embedded composite fonts",
     assert.deepEqual(snapshot.issues, []);
   });
 });
+
+
+test("snapshot reads reuse the scan until explicit refresh and report missing vaults distinctly", async () => {
+  const { getVaultSnapshot } = require("./vault-service.cjs");
+  await withVault(async (root) => {
+    await fs.writeFile(path.join(root, "first.md"), "First");
+    const initial = await scanVault(root);
+    await fs.writeFile(path.join(root, "second.md"), "Second");
+    assert.equal((await getVaultSnapshot(root)).totalFiles, initial.totalFiles);
+    await scanVault(root);
+    assert.equal((await getVaultSnapshot(root)).totalFiles, 2);
+    const missing = await getVaultSnapshot(path.join(root, "absent"));
+    assert.equal(missing.status, "missing");
+    assert.equal(missing.totalFiles, 0);
+  });
+});
+
+
+test("Brain Scope reuses scan metadata but still rejects changed sources", async () => {
+  const stations = require("./station-service.cjs");
+  await withVault(async (root) => {
+    await fs.writeFile(path.join(root, "source.md"), "Approved text");
+    await stations.addContext(root, ["source.md"]);
+    const originalReadDir = fs.readdir;
+    let scans = 0;
+    fs.readdir = async (...args) => { scans++; return originalReadDir(...args); };
+    try {
+      const scope = await stations.prepareBrainScope(root, { ownerId: "runtime-test", activeStationIds: [], matchMode: "any" });
+      const input = { ownerId: "runtime-test", scopeId: scope.id, sourceId: "source.md" };
+      assert.equal((await stations.readBrainSource(root, input)).content, "Approved text");
+      await fs.writeFile(path.join(root, "source.md"), "Changed text");
+      await assert.rejects(stations.readBrainSource(root, input), { code: "BRAIN_SOURCE_CHANGED" });
+      assert.equal(scans, 0);
+    } finally { fs.readdir = originalReadDir; }
+  });
+});
+
+
+test("PDF extraction preserves page boundaries and lines without treating empty pages as evidence", async () => {
+  const { textPdf } = require("../scripts/fixtures/text-pdf.cjs");
+  const { readIndexedPdfText } = require("./vault-service.cjs");
+  await withVault(async (root) => {
+    await fs.writeFile(path.join(root, "report.pdf"), textPdf([["Revenue was 120 million.", "Costs were 80 million."], [], ["Profit was 40 million."]]));
+    const text = await readIndexedPdfText(root, "report.pdf");
+    assert.match(text, /\[PDF page 1\]\nRevenue was 120 million\.\nCosts were 80 million\./);
+    assert.match(text, /\[PDF page 2\]\n\[No extractable text/);
+    assert.match(text, /\[PDF page 3\]\nProfit was 40 million\./);
+    assert.equal((await readPdfFile(root, "report.pdf")).textStatus, "ready");
+    await fs.writeFile(path.join(root, "empty.pdf"), textPdf([[]]));
+    assert.equal(await readIndexedPdfText(root, "empty.pdf"), "");
+    assert.equal((await readPdfFile(root, "empty.pdf")).textStatus, "empty");
+  });
+});

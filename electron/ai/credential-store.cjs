@@ -18,6 +18,12 @@ const schema = z
       .nullable(),
   })
   .extend({
+    openrouter: z
+      .string()
+      .max(16384)
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+      .nullable()
+      .optional(),
     nvidia: z
       .string()
       .max(16384)
@@ -100,7 +106,7 @@ class CredentialStore {
     if (!state[providerId])
       throw new ModelRuntimeError(
         "AUTH_REQUIRED",
-        `Add a ${providerId === "nvidia" ? "NVIDIA" : "Gemini"} API key in AI Terminal.`,
+        `Add a ${providerId === "openrouter" ? "OpenRouter" : providerId === "nvidia" ? "NVIDIA" : "Gemini"} API key in Settings.`,
       );
     if (!this.available())
       throw new ModelRuntimeError(
@@ -117,7 +123,7 @@ class CredentialStore {
     } catch {
       throw new ModelRuntimeError(
         "AUTH_INVALID",
-        "The saved credential cannot be decrypted. Replace it in AI Terminal.",
+        "The saved credential cannot be decrypted. Replace it in Settings.",
       );
     }
   }

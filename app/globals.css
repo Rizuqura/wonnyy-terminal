@@ -228,7 +228,8 @@ button, input { font: inherit; } button { color: inherit; } .app-shell { height:
 .pctrl-opts button.on { color: var(--p-orange); border-color: var(--p-orange); }
 .pctrl-check { display: flex; align-items: center; gap: 5px; border: 1px solid var(--p-border); background: rgba(8, 11, 13, .9); padding: 5px 7px; color: #8a9299; font: 8px ui-monospace, monospace; cursor: pointer; letter-spacing: .04em; }
 .pctrl-check:hover { color: #b7afa6; border-color: #625d57; }
-.pctrl-check input { display: none; }
+.pctrl-check input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.pctrl-check:focus-within { outline: 1px solid var(--p-orange); outline-offset: 2px; }
 .pctrl-box { color: #9d9388; }
 
 /* Planet view header crumbs */
@@ -316,9 +317,18 @@ button, input { font: inherit; } button { color: inherit; } .app-shell { height:
 .workspace-grid { grid-template-columns: var(--sidebar-width, 193px) minmax(480px, 1fr) 260px; }
 .planet-grid { grid-template-columns: var(--sidebar-width, 193px) minmax(440px, 1fr) 224px; }
 .sidebar-slot { position: relative; min-width: 0; min-height: 0; }
+.vault-sidebar-content { height: 100%; min-height: 0; }
+.vault-window-toggle { position: absolute; z-index: 9; top: 2px; right: 7px; width: 24px; height: 24px; padding: 0; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; font-size: 18px; line-height: 1; }
+.vault-window-toggle:hover { color: var(--amber); border-color: var(--amber); }
+.vault-window-toggle:focus-visible, .sidebar-resize-handle:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; }
+.vault-sidebar-content .pane-heading { padding-right: 36px; min-height: 29px; }
+.sidebar-minimized { background: var(--panel); border-right: 1px solid var(--line); }
+.sidebar-minimized .vault-window-toggle { right: 5px; }
+.vault-minimized-label { display: block; margin: 38px auto 0; writing-mode: vertical-rl; color: var(--text); font: 9px ui-monospace, monospace; letter-spacing: .12em; }
 .knowledge-sidebar { height: 100%; }
 .sidebar-resize-handle { position: absolute; z-index: 8; top: 0; right: -4px; width: 8px; height: 100%; cursor: col-resize; touch-action: none; }
-.sidebar-resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; transition: background .12s ease; }
+.sidebar-resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--line); transition: background .12s ease; }
+.sidebar-resize-handle::before { content: ""; position: absolute; top: calc(50% - 18px); left: 2px; width: 3px; height: 36px; border-radius: 2px; background: var(--amber); opacity: .65; }
 .sidebar-resize-handle:hover::after, .sidebar-resize-handle:active::after { background: var(--amber); }
 @media (max-width: 1180px) {
   .workspace-grid { grid-template-columns: var(--sidebar-width, 175px) minmax(470px, 1fr) 220px; }
@@ -383,3 +393,34 @@ button, input { font: inherit; } button { color: inherit; } .app-shell { height:
 }
 
 /* Local-only recorded chat runtime. */
+
+/* Flat Planetview keeps geometry and status cues without lighting effects. */
+.planet-flat .pv-canvas { background: #191a1b; }
+.planet-flat *, .planet-flat *::before, .planet-flat *::after {
+  box-shadow: none !important;
+  text-shadow: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+}
+.planet-flat .pworld { will-change: auto; }
+.planet-flat .pnode, .planet-flat .porb, .planet-flat .plabel, .planet-flat .pedge { transition: none; }
+.planet-flat .pnode .porb { background: #cfd3d6; transform: none; }
+.planet-flat .pdir .porb { background: #f29a22; }
+.planet-flat .pfile-pdf .porb { background: #e69b98; }
+.planet-flat .pfile-csv .porb { background: #8fd2e1; }
+.planet-flat .pasteroid .porb { background: #756f68; }
+.planet-flat .pcontext-hub-orb { background: #284b44; }
+.planet-flat .pnode.station-match .porb { outline: 1px solid #70d6c4; outline-offset: 2px; }
+.planet-flat .pnode.selected .porb,
+.planet-flat .pnode.hovered .porb,
+.planet-flat .pnode:focus-visible .porb { outline: 2px solid #ffd9a0; outline-offset: 3px; }
+
+/* Runtime notices overlay the workspace without changing shell grid rows. */
+.vault-runtime-notices { position: absolute; top: 29px; left: 50%; transform: translateX(-50%); z-index: 40; max-width: min(720px, 85vw); max-height: 35vh; overflow: auto; background: var(--panel); font: 10px ui-monospace, monospace; }
+.vault-runtime-notices:empty { display: none; }
+.vault-runtime-notices summary { cursor: pointer; }
+
+.pdf-ai-context { padding: 8px 12px; border-bottom: 1px solid var(--line); font: 10px/1.5 ui-monospace, monospace; color: var(--muted); }
+.pdf-ai-context button { border: 1px solid var(--line); background: #111918; color: var(--amber); padding: 5px 8px; font: inherit; cursor: pointer; }
+.pdf-ai-context button:disabled { opacity: .5; cursor: default; }
+.pdf-ai-context p { margin: 5px 0 0; }

@@ -1,5 +1,4 @@
 const { randomUUID } = require("node:crypto");
-const { setTimeout: delay } = require("node:timers/promises");
 const {
   ModelRuntimeError,
   serializeModelError,
@@ -43,7 +42,7 @@ function remoteError(status, retryAfter) {
     ],
     401: [
       "AUTH_INVALID",
-      "Gemini rejected the API key. Replace it in AI Terminal.",
+      "Gemini rejected the API key. Replace it in Settings.",
     ],
     403: [
       "AUTH_INVALID",
@@ -59,7 +58,7 @@ function remoteError(status, retryAfter) {
     ],
     503: [
       "REMOTE_SERVER_ERROR",
-      "Google could not serve the selected Gemini model (HTTP 503). Retry shortly, or choose another available model in AI Terminal.",
+      "Google could not serve the selected Gemini model (HTTP 503). Retry shortly, or choose another available model in Settings.",
     ],
   };
   const [code, message] =
@@ -67,7 +66,7 @@ function remoteError(status, retryAfter) {
     (status >= 500
       ? [
           "REMOTE_SERVER_ERROR",
-          `Google returned a server error (HTTP ${status}). Retry shortly, or choose another available model in AI Terminal.`,
+          `Google returned a server error (HTTP ${status}). Retry shortly, or choose another available model in Settings.`,
         ]
       : ["REMOTE_REQUEST_INVALID", "Gemini rejected this request."]);
   let seconds = Number(retryAfter);
@@ -121,35 +120,16 @@ class GeminiProvider {
       touch();
       const apiKey = await this.credentials.get();
       controller.signal.throwIfAborted();
-      for (let attempt = 0; ; attempt++) {
-        controller.signal.throwIfAborted();
-        response = await this.fetch(BASE_URL + resource, {
-          ...init,
-          redirect: "error",
-          signal: controller.signal,
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": apiKey,
-          },
-        });
-        // Retry only rejected requests, before any answer has been consumed.
-        // The original deadline and cancellation signal cover every attempt.
-        if (![500, 502, 503, 504].includes(response.status) || attempt >= 2)
-          break;
-        const retryAfter = remoteError(
-          response.status,
-          response.headers.get("retry-after"),
-        ).details.retryAfterSeconds;
-        if (retryAfter !== null && retryAfter > 10) break;
-        await response.body?.cancel().catch(() => {});
-        await delay(
-          Math.max(1000 * 2 ** attempt, (retryAfter ?? 0) * 1000),
-          undefined,
-          {
-            signal: controller.signal,
-          },
-        );
-      }
+      controller.signal.throwIfAborted();
+      response = await this.fetch(BASE_URL + resource, {
+        ...init,
+        redirect: "error",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+      });
       if (!response.ok) {
         if (response.status === 400) {
           let body = "";
@@ -292,28 +272,38 @@ class GeminiProvider {
         "A single system instruction must precede the conversation.",
       );
     const { isPlanFormat } = require("../dataset-planner.cjs");
-    const format = isPlanFormat(request.format)
-      ? request.format
-      : parse(
-          z
-            .object({
-              type: z.literal("object"),
-              properties: z
-                .object({
-                  answer: z
-                    .object({
-                      type: z.literal("string"),
-                      description: z.string().max(1000).optional(),
-                    })
-                    .strict(),
-                })
-                .strict(),
-              required: z.tuple([z.literal("answer")]),
-              additionalProperties: z.literal(false),
-            })
-            .strict(),
-          request.format,
-        );
+    const { isStatisticsFormat } = require("../statistics.cjs");
+    const format =
+      isPlanFormat(request.format) || isStatisticsFormat(request.format)
+        ? request.format
+        : parse(
+            z
+              .object({
+                type: z.literal("object"),
+                properties: z
+                  .object({
+                    citations: z
+                      .object({
+                        type: z.literal("array"),
+                        items: z.object({ type: z.literal("string") }).strict(),
+                        maxItems: z.literal(32),
+                      })
+                      .strict()
+                      .optional(),
+                    answer: z
+                      .object({
+                        type: z.literal("string"),
+                        description: z.string().max(1000).optional(),
+                      })
+                      .strict(),
+                  })
+                  .strict(),
+                required: z.tuple([z.literal("answer")]),
+                additionalProperties: z.literal(false),
+              })
+              .strict(),
+            request.format,
+          );
     const contents = [];
     for (const message of messages.slice(1)) {
       const role = message.role === "assistant" ? "model" : "user";
@@ -381,6 +371,7 @@ class GeminiProvider {
             content += part.text;
             firstTokenMs ??= Math.round(performance.now() - started);
             touch(); // Thinking/keep-alive traffic does not extend answer inactivity.
+            request.onGenerationStarted?.();
             if (settings.streaming) request.onContent?.(content);
           }
           if (candidate?.finishReason) finishReason = candidate.finishReason;

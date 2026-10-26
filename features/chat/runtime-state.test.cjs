@@ -42,3 +42,42 @@ test("late events cannot replace current run; cancellation suppresses subsequent
   assert.equal(state.requestId, null);
   assert.equal(state.content, "");
 });
+
+test("cancelled and insufficient results remain neutral terminal states after finish", () => {
+  for (const phase of ["CANCELLED", "CONTEXT_INSUFFICIENT"]) {
+    let state = runtimeReducer(initialRuntime, {
+      type: "start",
+      requestId: "run",
+    });
+    state = runtimeReducer(state, {
+      type: "event",
+      event: { requestId: "run", state: phase },
+    });
+    state = runtimeReducer(state, { type: "finish" });
+    assert.equal(state.state, phase);
+    assert.equal(state.requestId, null);
+    assert.equal(state.error, null);
+  }
+});
+
+test("duplicate starts and late tokens cannot replace an active or cancelled request", () => {
+  let state = runtimeReducer(initialRuntime, {
+    type: "start",
+    requestId: "one",
+  });
+  assert.equal(
+    runtimeReducer(state, { type: "start", requestId: "two" }),
+    state,
+  );
+  state = runtimeReducer(state, {
+    type: "event",
+    event: { requestId: "one", state: "CANCELLED" },
+  });
+  assert.equal(
+    runtimeReducer(state, {
+      type: "event",
+      event: { requestId: "one", state: "GENERATING", content: "late" },
+    }),
+    state,
+  );
+});

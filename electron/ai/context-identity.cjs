@@ -25,7 +25,7 @@ function contextIdentity(scope) {
   )
     throw new ModelRuntimeError(
       "MODEL_CONTEXT_INVALID",
-      "Approve 1 to 32 available, unchanged Markdown, CSV or text-PDF sources in Active Context.",
+      "Use 1 to 32 available Markdown, CSV or text-PDF files in the selected Context Box or explicitly reviewed Active Context.",
     );
   const sources = input
     .map((source) => ({

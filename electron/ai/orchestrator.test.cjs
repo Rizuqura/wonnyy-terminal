@@ -11,6 +11,51 @@ const {
 
 const runId = "11111111-1111-4111-8111-111111111111";
 const hash = "a".repeat(64);
+
+test("oversized box reports per-file budget before model preparation or inference", async () => {
+  let calls = 0;
+  const records = [];
+  const orchestrator = createContextOrchestrator({
+    randomUUID: () => runId,
+    prepareScope: async () => scope(),
+    readSource: async () => content({ content: "evidence ".repeat(4000) }),
+    provider: {
+      prepare: async () => {
+        calls++;
+      },
+      complete: async () => {
+        calls++;
+      },
+    },
+    recordRun: async (record) => {
+      records.push(record);
+    },
+  });
+  await assert.rejects(
+    orchestrator.run(
+      {
+        model: "test",
+        userMessage: "Review it.",
+        activeStationIds: [],
+        matchMode: "any",
+      },
+      {
+        prepareModel: true,
+        settings: { contextWindow: 2048, outputLimit: 512 },
+      },
+    ),
+    (error) => {
+      assert.equal(error.code, "MODEL_CONTEXT_TOO_LARGE");
+      assert.match(error.message, /allocation.md: ~12000 tokens/);
+      assert.ok(error.details.estimatedTokens > error.details.available);
+      assert.equal(error.details.sourceBudget[0].relativePath, "allocation.md");
+      return true;
+    },
+  );
+  assert.equal(calls, 0);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].status, "failed");
+});
 const manifestSource = {
   id: "allocation.md",
   relativePath: "allocation.md",
@@ -532,4 +577,42 @@ test("answer correction budgets its complete prompt and drops whole history exch
       );
     }
   }
+});
+
+test("empty readable context records an insufficient result without loading, generating or retrying", async () => {
+  const records = [],
+    events = [];
+  const orchestrator = createContextOrchestrator({
+    prepareScope: async () => scope(),
+    readSource: async () => content({ content: "   " }),
+    provider: {
+      prepare: () => assert.fail("No model load"),
+      complete: () => assert.fail("No inference"),
+    },
+    recordRun: async (record) => records.push(record),
+  });
+  const result = await orchestrator.run(
+    {
+      model: "qwen3:4b",
+      userMessage: "Summarize",
+      activeStationIds: [],
+      matchMode: "any",
+    },
+    {
+      runId,
+      prepareModel: true,
+      signal: new AbortController().signal,
+      onEvent: (event) => events.push(event),
+    },
+  );
+  assert.equal(result.diagnostics.contextInsufficient, true);
+  assert.equal(result.diagnostics.modelExecuted, false);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].status, "succeeded");
+  assert.equal(records[0].sourcesActuallyRead[0].contentHash, hash);
+  assert.equal(events.at(-1).state, "CONTEXT_INSUFFICIENT");
+  const progress = events
+    .filter((event) => event.state === "CONTEXT_READING")
+    .map((event) => event.status.progress.current);
+  assert.deepEqual(progress, [0, 1]);
 });

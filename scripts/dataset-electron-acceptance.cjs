@@ -101,7 +101,8 @@ async function main() {
       await desktop.ai.settings({ modelId: "qwen3:4b" });
       await desktop.context.add(["sales.csv"]);
       const scope = { activeStationIds: [], matchMode: "any" };
-      const chat = await desktop.ai.createConversation(scope);
+      const box = await desktop.ai.saveContextBox({name: "Dataset acceptance"});
+      const chat = await desktop.ai.createConversation({contextBoxId:box.id,creationId:crypto.randomUUID()});
       return desktop.ai.chat({
         ...scope,
         conversationId: chat.id,

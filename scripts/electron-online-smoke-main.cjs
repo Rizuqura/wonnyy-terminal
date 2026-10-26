@@ -6,4 +6,8 @@ const { createOnlineSmokeFetch } = require("./fixtures/online-smoke-fetch.cjs");
 const mock = createOnlineSmokeFetch();
 globalThis.fetch = mock.fetchImpl;
 globalThis.onlineSmoke = mock.state;
+// Hidden UI acceptance needs foreground-equivalent animation and timer scheduling.
+app.on("browser-window-created", (_, window) =>
+  window.webContents.setBackgroundThrottling(false),
+);
 require("../electron/main.cjs");

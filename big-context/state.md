@@ -1,6 +1,40 @@
-﻿# Wonnyy 0.0.5 - Amadeus project state
+# QTerminal 1.0.0 Victoria - project state
+
+## Victoria release UI - 2026-10-26
+
+CHronoZ is now a real selectable chat agent with blank custom instructions/skills/PFP and separate conversations/preferences. Planet View gains wider orbital spacing, larger picking assistance and a Focus canvas toggle. Desktop bridge is **18**. See [CHronoZ and Planet handoff](./feature/chronoz-planet-handoff.md); earlier dummy-only descriptions below are historical.
+
+Follow-up fixes restore usable vault header geometry, remove the library beneath the vault, add dark scrollbars and a single-row minimized Wonnyy bar with safe restore geometry. Context Boxes remain available through the Planet context manager’s library dialog. CHronoZ appears as a non-executing placeholder contact. See [UI polish handoff](./feature/ui-polish-handoff.md).
+
+App identity is now **QTerminal 1.0.0 Victoria**. Workspace, navigation and shared docked/floating chat use clearer system typography and minimal dark surfaces; context building retains retro controls. Markdown/CSV readers add explicit context review, with no automatic session creation. Existing storage directories and app ID remain compatible. See [Victoria workspace handoff](./feature/victoria-workspace-handoff.md) for workflow, persistence and verification.
+
+## OpenRouter usage monitor - 2026-10-25
+
+Planet View now includes a compact collapsible allowance monitor below its toolbar. Main-process `/api/v1/key` reads verify USD cap/remaining/reset; local completed-request input/output tokens have separate session scope. Unknown metrics and management-only wallet credits remain unavailable, with no assumed $1,000 weekly budget. Existing graph/Station/Context Box and Agent semantics are preserved. See [usage monitor handoff](./feature/openrouter-usage-handoff.md) for lifecycle, credential safety and synthetic verification.
+
+## AGENT workspace update - 2026-10-25
+
+The Agent view now matches the minimal Settings palette and typography. Wonnyy appears as a contact with its own initially collapsed, searchable chat-history dropdown; Context / Details opens on demand. Static surfaces avoid animation/blur/canvas, and memoized contacts do not redraw for every streamed token. No hardware GPU benchmark is claimed. Existing chat, provider, context and agent-settings persistence remain unchanged.
+
+The new AGENT tab shares Wonnyy Agent sessions with the floating/docked views. It adds searchable history, explicit Context Box creation flow, bound-source details, resizable panes/drawers and per-agent instructions/PFP settings. Agent settings and assets are application-owned by stable ID, with lazy non-writing legacy history association and immutable per-run policy provenance. Desktop bridge is **17**. See [Agent workspace handoff](./feature/agent-workspace-handoff.md) for implementation, migration and verification.
+
+## OpenRouter and AI Terminal update - 2026-10-25
+
+Live-catalog fix: accepted `~` aliases and isolated malformed catalog rows; separated encrypted save confirmation from network discovery. Live key authentication returned 200 and the production Electron UI displayed 467 models using the persisted key, with no inference calls. Expanded synthetic UI regression and 199 deterministic tests pass. See [OpenRouter handoff](./openrouter-handoff.md) for diagnosis and verification evidence.
+
+AI Terminal now uses provider cards, one connection form, searchable models and collapsed advanced settings. OpenRouter supports encrypted keys, catalog discovery, streaming, synthetic checks, credit-limit errors and the existing bound-chat lifecycle. Desktop bridge is **16**. See [OpenRouter handoff](./openrouter-handoff.md). Earlier provider and UI descriptions below are historical.
+
+## Wonnyy Agent update - 2026-10-25
+
+QTerminal now has integrated editable Context Boxes in the shared Explorer/Planet sidebar, reviewed selection additions, source details with remove/relink, confirmed box deletion, explicit agent preselection and confirmed chat switching. Each turn resolves the latest permitted files and records an immutable source/hash manifest; previous messages keep their original evidence. Empty boxes persist but cannot start chats. Schema 1 boxes and schema 1/2 conversations remain readable without eager rewriting; explicit use migrates metadata as needed. Desktop bridge version is **15**. See [the implementation handoff](./feature/wonnyy-agent-handoff.md) for ownership, migration and verification; older single-source/automatic-chat descriptions below are historical. Full pinned/budgeted Context Windows remain separate roadmap work.
 
 Updated: **2026-09-10**. Release checkpoint: **0.0.5**, tag **`v0.0.5-amadeus`**. Previous baseline: `80ffb5e` / `v0.0.4-amadeus`.
+
+## Runtime ergonomics update — 2026-09-24
+
+The runtime pass adds observable source reading/model phases, explicit cancellable Ollama downloads, neutral cancellation and context-insufficient results, centralized bounded infrastructure recovery, and vault snapshot reuse during chat. Desktop bridge version is **13**; reopen Electron. See [runtime ergonomics](./runtime-ergonomics.md) for ownership, grounding limits and verification. Earlier version numbers and retry descriptions below are historical.
+
+**PDF chat update (2026-09-25):** opening a PDF now keeps the shared chat visible. **ADD PDF TO AI CONTEXT** opens the existing approval dialog directly from the PDF reader; opening or approving a file does not itself invoke a model. Extraction retains line breaks and physical page markers, and the model prompt requests filename/page citations while distinguishing extracted text from unavailable page images. Empty-text PDFs show an OCR-required explanation. Scanned images, visual chart interpretation and OCR are not implemented. Page-aware extraction changes extracted-content hashes; older PDF conversations remain viewable, but may require fresh context and a new conversation. Existing audit records are not rewritten.
 
 ## Latest implementation update - Station context can reach models
 

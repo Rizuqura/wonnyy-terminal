@@ -199,75 +199,19 @@ test("NVIDIA failures remain bounded and sanitized", async () => {
     assert.equal(calls, 1);
   }
 });
-test("NVIDIA recovers transient HTTP failures using the identical request", async () => {
-  for (const status of [500, 502, 503, 504]) {
-    const bodies = [];
-    let released = false;
-    const provider = new NvidiaProvider({
-      credentials,
-      fetchImpl: async (_url, init) => {
-        bodies.push(init.body);
-        if (bodies.length === 1)
-          return new Response(
-            new ReadableStream({
-              cancel() {
-                released = true;
-              },
-            }),
-            { status },
-          );
-        assert.equal(released, true);
-        return stream([part("Recovered answer", "stop")]);
-      },
-    });
-    const result = await provider.complete(request());
-    assert.equal(validateAnswer(result), "Recovered answer");
-    assert.equal(bodies.length, 2);
-    assert.equal(bodies[0], bodies[1]);
-  }
-});
-
-test("NVIDIA stops after two automatic server retries", async () => {
-  let calls = 0;
-  const provider = new NvidiaProvider({
-    credentials,
-    fetchImpl: async () => {
-      calls++;
-      return new Response("Unavailable", { status: 504 });
-    },
-  });
-  await assert.rejects(provider.complete(request()), {
-    code: "REMOTE_SERVER_ERROR",
-  });
-  assert.equal(calls, 3);
-});
-
-test("NVIDIA retry backoff respects cancellation and the original deadline", async () => {
-  for (const cancel of [false, true]) {
+test("NVIDIA transport never retries rejected requests", async () => {
+  for (const status of [429, 500, 502, 503, 504]) {
     let calls = 0;
-    const controller = new AbortController();
     const provider = new NvidiaProvider({
       credentials,
       fetchImpl: async () => {
         calls++;
-        if (cancel)
-          setTimeout(
-            () =>
-              controller.abort(
-                new ModelRuntimeError("MODEL_CANCELLED", "Stopped"),
-              ),
-            5,
-          );
-        return new Response("Unavailable", { status: 504 });
+        return new Response("private body", { status });
       },
     });
-    await assert.rejects(
-      provider.request("chat/completions", {}, () => assert.fail(), {
-        signal: controller.signal,
-        absoluteMs: 30,
-      }),
-      { code: cancel ? "MODEL_CANCELLED" : "REMOTE_TIMEOUT" },
-    );
+    await assert.rejects(provider.complete(request()), {
+      code: status === 429 ? "RATE_LIMITED" : "REMOTE_SERVER_ERROR",
+    });
     assert.equal(calls, 1);
   }
 });
@@ -342,4 +286,18 @@ test("NVIDIA synthetic check validates IDs, requires expected JSON, and never re
     code: "MODEL_INVALID_REQUEST",
   });
   assert.equal(calls, 1);
+});
+
+test("statistics plans retain structured JSON through the provider", async () => {
+  const { STATISTICS_FORMAT } = require("../statistics.cjs");
+  const plan = { calculations: [], limitation: "Need input values." };
+  const provider = new NvidiaProvider({
+    credentials,
+    fetchImpl: async () => stream([part(JSON.stringify(plan), "stop")]),
+  });
+  const result = await provider.complete({
+    ...request(),
+    format: STATISTICS_FORMAT,
+  });
+  assert.deepEqual(JSON.parse(result.content), plan);
 });

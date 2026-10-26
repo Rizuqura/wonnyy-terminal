@@ -1,4 +1,5 @@
 const { _electron: electron } = require("playwright");
+const { openContextTools } = require("./fixtures/chat-context-tools.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -14,6 +15,7 @@ async function main() {
   const requests = [];
   let ollamaOnline = true;
   let installedModels = ["qwen3:4b", "qwen3:1.7b"];
+  let pullCalls = 0;
   const server = http.createServer(async (request, response) => {
     let raw = "";
     for await (const chunk of request) raw += chunk;
@@ -44,12 +46,31 @@ async function main() {
       );
     if (request.url === "/api/generate")
       return response.end(JSON.stringify({ done: true }));
+    if (request.url === "/api/pull") {
+      pullCalls++;
+      response.setHeader("Content-Type", "application/x-ndjson");
+      response.write(
+        JSON.stringify({
+          status: "pulling test layer",
+          completed: 25,
+          total: 100,
+        }) + "\n",
+      );
+      const timer = setTimeout(() => {
+        installedModels.push(input.model);
+        response.end(JSON.stringify({ status: "success" }) + "\n");
+      }, 4000);
+      response.on("close", () => clearTimeout(timer));
+      return;
+    }
     requests.push(input);
     const source = JSON.parse(input.messages[1].content);
     const answer =
-      source.relativePath === "a.md"
-        ? "ALPHA allocation is 25%."
-        : "BETA allocation is 40%.";
+      source.type === "pdf"
+        ? `The supplied PDF contains extracted text on page 1 (${source.relativePath}, page 1).`
+        : source.relativePath === "a.md"
+          ? "ALPHA allocation is 25%."
+          : "BETA allocation is 40%.";
     const encoded = JSON.stringify({ answer });
     response.setHeader("Content-Type", "application/x-ndjson");
     response.write(
@@ -111,7 +132,35 @@ async function main() {
       void dialog.dismiss();
     });
     await page.getByRole("textbox", { name: "Chat question" }).waitFor();
-    await page.waitForFunction(() => window.wonnyyDesktop?.apiVersion === 12);
+    await page.waitForFunction(() => window.wonnyyDesktop?.apiVersion === 18);
+  }
+  async function createExplicit() {
+    await openContextTools(page);
+    await page
+      .getByRole("button", { name: "Save Active Context as box", exact: true })
+      .click();
+    const name = "Box " + Date.now();
+    await page
+      .getByRole("textbox", { name: "New Context Box name" })
+      .fill(name);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page
+      .getByRole("button", { name: "+ New Chat", exact: true })
+      .first()
+      .click();
+    const picker = page.getByRole("dialog", { name: "New Wonnyy Agent chat" });
+    await picker.getByRole("radio", { name: new RegExp(name) }).check();
+    await picker
+      .getByRole("button", { name: "Create Chat", exact: true })
+      .click();
+    await picker.waitFor({ state: "hidden" });
+  }
+  async function selectHistory(id) {
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page
+      .locator(`[data-conversation-id="${id}"] > button`)
+      .first()
+      .click();
   }
   async function approve(file) {
     const clear = page.getByRole("button", {
@@ -158,12 +207,7 @@ async function main() {
       .getByRole("dialog", { name: "Add to Active Context", exact: true })
       .getByRole("button", { name: "Add to Active Context", exact: true })
       .click();
-    await page.waitForFunction(
-      (name) =>
-        document.querySelector(".chat-context strong")?.textContent ===
-        `Active Context: ${name}`,
-      file,
-    );
+    await createExplicit();
     await assertTyping();
     await page.waitForFunction(
       () =>
@@ -187,62 +231,109 @@ async function main() {
     await fs.writeFile(path.join(root, "a.md"), "ALPHA allocation is 25%.");
     await fs.writeFile(path.join(root, "b.md"), "BETA allocation is 40%.");
     await launch();
+    await page.getByRole("button", { name: "SETTINGS", exact: true }).click();
     await page
-      .getByRole("button", { name: "AI TERMINAL", exact: true })
-      .click();
-    await page
-      .getByRole("heading", { name: "AI Terminal", exact: true })
+      .getByRole("heading", { name: "Settings", exact: true })
       .waitFor();
+    assert.equal(
+      await page
+        .getByRole("button", { name: "AI TERMINAL", exact: true })
+        .count(),
+      0,
+    );
+    assert.equal(
+      await page
+        .getByRole("navigation", { name: "Primary" })
+        .getByRole("button", { name: "SETTINGS", exact: true })
+        .count(),
+      1,
+    );
+    const vaultSettings = page.getByRole("region", {
+      name: "Knowledge vault",
+      exact: true,
+    });
+    await vaultSettings.getByText(root, { exact: true }).waitFor();
+    assert.equal(
+      await page
+        .getByRole("navigation", { name: "AI providers" })
+        .getByRole("button")
+        .count(),
+      4,
+    );
+    await application.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+    });
+    await vaultSettings
+      .getByRole("button", { name: "Change vault folder", exact: true })
+      .click();
+    await page.waitForFunction(
+      () => !document.querySelector(".settings-vault-card button").disabled,
+    );
+    assert.equal(
+      await vaultSettings.getByText(root, { exact: true }).isVisible(),
+      true,
+    );
+    assert.equal(
+      (await page.evaluate(() => window.wonnyyDesktop.ai.listConversations()))
+        .length,
+      0,
+    );
+    checks.push(
+      "One Settings window includes all four providers and vault management; cancelling folder selection preserves the vault and creates no chat",
+    );
     await page.waitForFunction(() =>
       document
         .querySelector('[aria-label="AI readiness"]')
-        ?.textContent.includes("Context needed"),
+        ?.textContent.includes("Choose a Context Box"),
     );
     assert.equal(
       await page.locator(".top-nav .active").textContent(),
-      "AI TERMINAL",
+      "SETTINGS",
     );
     assert.equal(
       await page.getByRole("textbox", { name: "Chat question" }).count(),
       0,
     );
     ollamaOnline = false;
-    await page.getByRole("button", { name: "Refresh Local Models" }).click();
+    await page.getByRole("button", { name: "Refresh models" }).click();
     await page.waitForFunction(() =>
       document
         .querySelector('[aria-label="AI readiness"]')
-        ?.textContent.includes("Ollama offline"),
+        ?.textContent.includes("Not connected"),
     );
     ollamaOnline = true;
     installedModels = [];
-    await page.getByRole("button", { name: "Refresh Local Models" }).click();
+    await page.getByRole("button", { name: "Refresh models" }).click();
     await page.waitForFunction(() =>
       document
         .querySelector('[aria-label="AI readiness"]')
-        ?.textContent.includes("Model needed"),
+        ?.textContent.includes("Model unavailable"),
     );
     installedModels = ["qwen3:4b", "qwen3:1.7b"];
-    await page.getByRole("button", { name: "Refresh Local Models" }).click();
+    await page.getByRole("button", { name: "Refresh models" }).click();
     await page.waitForFunction(() =>
       document
         .querySelector('[aria-label="AI readiness"]')
-        ?.textContent.includes("Context needed"),
+        ?.textContent.includes("Choose a Context Box"),
     );
     await page.getByRole("button", { name: "Back to workspace" }).click();
     await page
       .getByRole("button", { name: "PLANET VIEW", exact: true })
       .click();
     await page.getByRole("textbox", { name: "Chat question" }).fill("Hello");
-    await page
-      .getByRole("button", { name: "Send message", exact: true })
-      .click();
-    await page.locator(".chat-error").waitFor();
+    assert.equal(
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .isDisabled(),
+      true,
+    );
     checks.push("Missing context explains Send action");
     await approve("a.md");
     await send("Summarize this");
-    const originalId = await page
-      .getByRole("combobox", { name: "Conversation history" })
-      .inputValue();
+    const originalId = await page.evaluate(
+      (root) => localStorage.getItem("qterminal-active-chat:" + root),
+      root,
+    );
     await page.locator('.file-row[title="b.md"]').click();
     await send("Explain point two");
     assert.equal(
@@ -263,7 +354,7 @@ async function main() {
     const moved = await panel.boundingBox();
     assert.notEqual(moved.x, before.x);
     const resize = await page
-      .getByRole("separator", { name: "Resize chat window" })
+      .getByRole("separator", { name: "Resize chat e", exact: true })
       .boundingBox();
     await page.mouse.move(resize.x + 6, resize.y + 6);
     await page.mouse.down();
@@ -299,9 +390,7 @@ async function main() {
     });
     assert.equal(await page.evaluate(() => window.smokeWheelEscaped), false);
     checks.push("Chat wheel events do not reach Planet View");
-    await page
-      .getByRole("button", { name: "AI TERMINAL", exact: true })
-      .click();
+    await page.getByRole("button", { name: "SETTINGS", exact: true }).click();
     await page.waitForFunction(() =>
       document
         .querySelector('[aria-label="AI readiness"]')
@@ -317,6 +406,7 @@ async function main() {
         .querySelector(".model-settings .model-active strong")
         ?.textContent.includes("qwen3:1.7b"),
     );
+    await page.getByText("Generation settings", { exact: true }).click();
     await page.getByLabel("Output limit", { exact: true }).fill("1024");
     await page
       .getByRole("button", { name: "Save generation settings" })
@@ -328,7 +418,7 @@ async function main() {
     await fs.mkdir("test-results", { recursive: true });
     await page.screenshot({ path: "test-results/ai-terminal.png" });
     checks.push(
-      "AI Terminal is a dedicated model setup tab with context readiness, model switching, and saved generation settings",
+      "Settings is a dedicated model setup tab with context readiness, model switching, and saved generation settings",
     );
     await page.getByRole("button", { name: "Back to workspace" }).click();
     await send("Same source with a different model");
@@ -346,58 +436,25 @@ async function main() {
     );
     await send("Summarize new source");
     assert.equal(requests.at(-1).messages.length, 3);
-    await page
-      .getByRole("combobox", { name: "Conversation history" })
-      .selectOption(originalId);
+    await selectHistory(originalId);
+    await send("Restored bound history");
     assert.equal(
-      await page.locator(".chat-context strong").textContent(),
-      "Active Context: b.md",
+      JSON.parse(requests.at(-1).messages[1].content).relativePath,
+      "a.md",
     );
-    await page.keyboard.type("Draft in the older chat");
-    assert.equal(
-      await page.getByRole("textbox", { name: "Chat question" }).inputValue(),
-      "Draft in the older chat",
-      "Switching history must return keyboard focus to the composer",
-    );
-    await page.getByRole("button", { name: "Resume with this source" }).click();
-    await page.waitForFunction(
-      () =>
-        document.querySelector(".chat-context strong")?.textContent ===
-        "Active Context: a.md",
-    );
-    await page.keyboard.type(" after resuming");
-    assert.equal(
-      await page.getByRole("textbox", { name: "Chat question" }).inputValue(),
-      "Draft in the older chat after resuming",
-      "Resuming a different source must keep the composer usable and preserve its draft",
-    );
-    await send("Restored history");
     checks.push(
-      "Context switch isolates history; explicit resume restores old source",
+      "History opens the original bound source without changing global approval",
     );
     await page.getByRole("button", { name: "WORKSPACE", exact: true }).click();
-    await page.getByRole("button", { name: "New Chat", exact: true }).click();
-    await page.waitForFunction(
-      (id) =>
-        document.querySelector('[aria-label="Conversation history"]').value !==
-        id,
-      originalId,
-    );
+    await createExplicit();
     await page.keyboard.type("New chat draft");
     assert.equal(
       await page.getByRole("textbox", { name: "Chat question" }).inputValue(),
       "New chat draft",
     );
-    await page
-      .getByRole("combobox", { name: "Conversation history" })
-      .selectOption(originalId);
-    await page.keyboard.type(" after switching");
-    assert.equal(
-      await page.getByRole("textbox", { name: "Chat question" }).inputValue(),
-      "New chat draft after switching",
-    );
+    await selectHistory(originalId);
     checks.push(
-      "Keyboard typing survives history selection, source resumption, and New Chat on both chat surfaces",
+      "Keyboard focus survives explicit creation and history selection on both surfaces",
     );
     await page
       .getByRole("button", { name: "PLANET VIEW", exact: true })
@@ -423,44 +480,36 @@ async function main() {
       () => document.querySelectorAll(".chat-run-id").length >= 2,
     );
     assert.equal(
-      await page
-        .getByRole("combobox", { name: "Conversation history" })
-        .inputValue(),
+      await page.evaluate(
+        (root) => localStorage.getItem("qterminal-active-chat:" + root),
+        root,
+      ),
       originalId,
     );
     checks.push("Electron restart restores persisted history and settings");
-    await page.getByText("Manage history", { exact: true }).click();
-    await page.getByRole("button", { name: "Rename", exact: true }).click();
     await page
-      .getByRole("textbox", { name: "Chat title" })
-      .fill("Renamed research");
-    await page.getByRole("button", { name: "Save title" }).click();
-    await page.waitForFunction(() =>
-      document
-        .querySelector(".chat-history select")
-        ?.selectedOptions[0].textContent.includes("Renamed research"),
-    );
-    await page
-      .getByRole("button", { name: "Delete chat", exact: true })
+      .getByRole("button", { name: "Rename chat", exact: true })
       .click();
     await page
-      .getByRole("dialog", { name: "Delete chat", exact: true })
-      .getByRole("button", { name: "Delete chat", exact: true })
+      .getByRole("textbox", { name: "Chat title", exact: true })
+      .fill("Renamed research");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.getByText("Renamed research", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Delete Renamed research", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Delete conversation", exact: true })
+      .getByRole("button", { name: "Delete conversation", exact: true })
       .click();
     await page.waitForFunction(
-      (id) =>
-        !Array.from(document.querySelectorAll(".chat-history option")).some(
-          (option) => option.value === id,
+      async (id) =>
+        !(await window.wonnyyDesktop.ai.listConversations()).some(
+          (c) => c.id === id,
         ),
       originalId,
     );
-    const remaining = await page.evaluate(
-      async () => (await window.wonnyyDesktop.ai.listConversations())[0].id,
-    );
-    await page
-      .getByRole("combobox", { name: "Conversation history" })
-      .selectOption(remaining);
-    await page.getByText("Manage history", { exact: true }).click();
     await page
       .getByRole("button", { name: "Clear history", exact: true })
       .click();
@@ -469,16 +518,14 @@ async function main() {
       .getByRole("button", { name: "Clear history", exact: true })
       .click();
     await page.waitForFunction(
-      () => document.querySelectorAll(".chat-history option").length === 1,
+      async () => !(await window.wonnyyDesktop.ai.listConversations()).length,
     );
     assert.ok(
       (await fs.readdir(path.join(root, ".wonnyy", "model-runs"))).some(
         (name) => name.endsWith(".json"),
       ),
     );
-    checks.push(
-      "Rename/delete/clear history preserve source files and audit records",
-    );
+    checks.push("Rename/delete/clear preserve source files and audit records");
     const switchedVault = path.join(root, ".wonnyy", "switched-vault");
     await fs.mkdir(switchedVault, { recursive: true });
     await fs.writeFile(path.join(switchedVault, "mapped.pdf"), cmapPdf());
@@ -565,6 +612,65 @@ async function main() {
     assert.equal(matches[0]?.relativePath, "mapped.pdf");
     checks.push(
       "PDF character maps load locally for indexing and packaged preview",
+    );
+    await page.getByRole("textbox", { name: "Chat question" }).waitFor();
+    const beforePdfApproval = requests.length;
+    await page
+      .getByRole("button", { name: "ADD PDF TO AI CONTEXT", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Add to Active Context", exact: true })
+      .getByRole("button", { name: "Add to Active Context", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "PDF IN ACTIVE CONTEXT", exact: true })
+      .waitFor();
+    assert.equal(
+      requests.length,
+      beforePdfApproval,
+      "Approval alone never sends PDF text to a model",
+    );
+    await createExplicit();
+    await send("Interpret the PDF and cite the page.");
+    const pdfSource = JSON.parse(requests.at(-1).messages[1].content);
+    assert.equal(pdfSource.type, "pdf");
+    assert.equal(pdfSource.relativePath, "mapped.pdf");
+    assert.match(pdfSource.content, /\[PDF page 1\]/);
+    assert.equal(await page.locator(".pdf-reader").count(), 1);
+    await page.screenshot({ path: "test-results/pdf-chat.png" });
+    checks.push(
+      "PDF preview keeps chat visible; explicit approval supplies page-aware text and source provenance to inference",
+    );
+    await page.getByRole("button", { name: "SETTINGS", exact: true }).click();
+    await page.getByText("Install a local model", { exact: true }).click();
+    const download = page.getByRole("region", {
+      name: "Local model downloads",
+    });
+    await download.getByRole("textbox").fill("qwen3:smoke");
+    await download
+      .getByRole("button", { name: "DOWNLOAD MODEL", exact: true })
+      .click();
+    await download.getByText(/Current layer:/).waitFor();
+    assert.equal(
+      await download
+        .getByRole("button", { name: "DOWNLOAD MODEL", exact: true })
+        .isDisabled(),
+      true,
+    );
+    await page.evaluate(() => {
+      void window.wonnyyDesktop.ai.pullModel("qwen3:smoke");
+    });
+    await download.getByRole("button", { name: "CANCEL", exact: true }).click();
+    await download.getByText(/DOWNLOAD CANCELLED/).waitFor();
+    assert.equal(pullCalls, 1);
+    await download
+      .getByRole("button", { name: "DOWNLOAD MODEL", exact: true })
+      .click();
+    await download.getByText(/MODEL INSTALLED/).waitFor();
+    assert.equal(pullCalls, 2);
+    await page.screenshot({ path: "test-results/runtime-download.png" });
+    checks.push(
+      "Explicit model download exposes real layer progress, deduplicates requests, cancels neutrally and installs after explicit retry",
     );
     assert.deepEqual(errors, []);
     await fs.writeFile(

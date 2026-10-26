@@ -56,6 +56,8 @@ function validateDatasetAnswer(answer, results, question, otherSources = []) {
       ![...allowed].some(
         (value) =>
           number === value ||
+          Math.abs(number - value) <=
+            Number.EPSILON * Math.max(1, Math.abs(value)) * 8 ||
           (Math.abs(number - value) <= 0.005 && !Number.isInteger(number)),
       ),
   );

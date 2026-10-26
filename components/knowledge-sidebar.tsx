@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { VaultEntry, VaultSearchResult, VaultSnapshot } from "../types/electron";
 
-export function KnowledgeSidebar({ snapshot, isScanning, error, selectedIds, pdfSearchResults, isSearchingPdf, onSearchPdf, onRescan, onChangeVault, onSelect, onOpen, onOpenSearchResult }: Readonly<{
+export function KnowledgeSidebar({ snapshot, isScanning, error, selectedIds, pdfSearchResults, isSearchingPdf, onSearchPdf, query, onQueryChange, onRescan, onChangeVault, onSelect, onOpen, onOpenSearchResult }: Readonly<{
   snapshot: VaultSnapshot | null;
   isScanning: boolean;
   error: string | null;
@@ -11,6 +11,8 @@ export function KnowledgeSidebar({ snapshot, isScanning, error, selectedIds, pdf
   pdfSearchResults: VaultSearchResult[];
   isSearchingPdf: boolean;
   onSearchPdf: (query: string) => void;
+  onQueryChange: (query: string) => void;
+  query: string;
   onRescan: () => void;
   onChangeVault: () => void;
   onSelect: (entry: VaultEntry, additive: boolean) => void;
@@ -18,7 +20,6 @@ export function KnowledgeSidebar({ snapshot, isScanning, error, selectedIds, pdf
   onOpenSearchResult: (relativePath: string) => void;
 }>) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const [query, setQuery] = useState("");
   const ready = snapshot?.status === "ready";
   const filteredEntries = ready ? filterEntries(readableEntries(snapshot.entries), query) : [];
 
@@ -36,7 +37,7 @@ export function KnowledgeSidebar({ snapshot, isScanning, error, selectedIds, pdf
 
   return <aside className="knowledge-sidebar">
     <div className="pane-heading"><span>KNOWLEDGE VAULT</span><button className="refresh-button" onClick={onRescan} disabled={isScanning} aria-label="Rescan vault">↻</button></div>
-    <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search vault…" aria-label="Search vault" disabled={!ready} /></label>
+    <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search vault…" aria-label="Search vault" disabled={!ready} /></label>
     <div className="vault-title" title={snapshot?.rootPath ?? "C:\\bank"}>▾ <span className="folder">▰</span> {snapshot?.rootPath ?? "C:\\bank"}</div>
     <button className="vault-change" onClick={onChangeVault}>CHANGE VAULT</button>
     <div className="tree">

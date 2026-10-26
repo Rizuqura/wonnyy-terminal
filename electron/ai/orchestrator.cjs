@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { setTimeout: delay } = require("node:timers/promises");
 const { MODEL_ERROR_CODES, ModelRuntimeError } = require("./model-errors.cjs");
 const {
   buildContextMessages,
@@ -11,10 +12,12 @@ const { DEFAULTS } = require("./model-registry.cjs");
 const { createDatasetSession } = require("./dataset-session.cjs");
 const { planDataset } = require("./dataset-planner.cjs");
 const { validateDatasetAnswer } = require("./dataset-evidence.cjs");
+const { planStatistics, wantsStatistics } = require("./statistics.cjs");
 
 const ANSWER_FORMAT = Object.freeze({
   type: "object",
   properties: {
+    citations: { type: "array", items: { type: "string" }, maxItems: 32 },
     answer: {
       type: "string",
       description:
@@ -161,42 +164,88 @@ function createContextOrchestrator({
       const runId = options.runId ?? randomUUID();
       const settings = { ...DEFAULTS, ...options.settings };
       const diagnostics = {
+        ...(options.agentConfig
+          ? {
+              agent: {
+                id: options.agentConfig.id,
+                policyVersion: options.agentConfig.policyVersion,
+                customInstructionsHash: require("node:crypto")
+                  .createHash("sha256")
+                  .update(options.agentConfig.customInstructions)
+                  .digest("hex"),
+              },
+            }
+          : {}),
+        ...(options.contextBox
+          ? {
+              contextBox: {
+                id: options.contextBox.id,
+                name: options.contextBox.name,
+                revision: options.contextBox.revision,
+              },
+            }
+          : {}),
         executionLocation: providerName === "ollama" ? "local" : "remote",
       };
       // Share one retry across loading, initial generation and answer repair.
       // The ChatService signal still owns the original absolute deadline.
+      let generationStarted = false;
       const recoverTimeout = async (state, operation) => {
         try {
           return await operation();
         } catch (error) {
           if (
-            error.code !== "MODEL_TIMEOUT" ||
+            !["MODEL_TIMEOUT", "REMOTE_SERVER_ERROR"].includes(error.code) ||
             options.signal?.aborted ||
             !options.signal ||
-            diagnostics.timeoutRetryCount
+            diagnostics.timeoutRetryCount ||
+            generationStarted ||
+            error.details?.phase === "generation" ||
+            (error.details?.retryAfterSeconds ?? 0) > 10
           )
             throw error;
           diagnostics.timeoutRetryCount = 1;
+          diagnostics.attempt = 2;
+          diagnostics.maxAttempts = 2;
           diagnostics.timeoutRetryPhase = error.details?.phase ?? state;
           options.onEvent?.({
             state,
             content: "",
             diagnostics: { ...diagnostics },
           });
+          if (error.code === "REMOTE_SERVER_ERROR")
+            await delay(
+              Math.max(1000, (error.details?.retryAfterSeconds ?? 0) * 1000),
+              undefined,
+              { signal: options.signal },
+            );
           options.signal.throwIfAborted();
           return await operation();
         }
       };
       const stage = (state) => {
         options.signal?.throwIfAborted();
-        options.onEvent?.({ state });
+        const messages = {
+          MODEL_LOADING: "Loading the selected model into memory.",
+          MODEL_READY: "Model is ready.",
+          GENERATING: "Generating from approved sources.",
+          VALIDATING: "Checking the response.",
+          RECORDING: "Saving the response and source provenance.",
+          PREPARING_CONTEXT: "Preparing approved Brain Scope.",
+          REMOTE_CONNECTING: "Connecting to the selected provider.",
+        };
+        options.onEvent?.({
+          state,
+          status: { message: messages[state] ?? state, progress: undefined },
+        });
       };
       const measure = async (name, operation) => {
         const start = performance.now();
         try {
           return await operation();
         } finally {
-          diagnostics[name] = Math.round(performance.now() - start);
+          diagnostics[name] =
+            (diagnostics[name] ?? 0) + Math.round(performance.now() - start);
         }
       };
       const ownerId = `model-run:${runId}`;
@@ -238,6 +287,18 @@ function createContextOrchestrator({
         sourcesAvailable = Array.isArray(scope?.sources)
           ? scope.sources.map(sourceReference)
           : [];
+        options.onEvent?.({
+          state: "CONTEXT_READING",
+          status: {
+            message: "Reading approved sources.",
+            context: { sourceCount: scope.sources.length },
+            progress: {
+              current: 0,
+              total: scope.sources.length,
+              unit: "sources",
+            },
+          },
+        });
         const sources = [];
         for (const manifestSource of scope.sources) {
           options.signal?.throwIfAborted();
@@ -265,7 +326,85 @@ function createContextOrchestrator({
           }
           sources.push(source);
           sourcesActuallyRead.push(sourceReference(source));
+          options.onEvent?.({
+            state: "CONTEXT_READING",
+            status: {
+              message: "Checking source hashes.",
+              progress: {
+                current: sources.length,
+                total: scope.sources.length,
+                unit: "sources",
+              },
+            },
+          });
         }
+        if (sources.every((source) => !source.content.trim())) {
+          const answer =
+            "CONTEXT INSUFFICIENT\nInsufficient evidence in the active Context Box. The approved sources contain no readable text. Add more context or select a text-based source.";
+          Object.assign(diagnostics, {
+            contextInsufficient: true,
+            evidence: "empty",
+            modelExecuted: false,
+          });
+          const completedAt = new Date(now()).toISOString();
+          const scopeRecord = {
+            id: scope.id,
+            mode: scope.mode,
+            manifestVersion: scope.manifestVersion,
+          };
+          stage("RECORDING");
+          await recordRun({
+            ...recordMetadata(),
+            runId,
+            status: "succeeded",
+            startedAt,
+            completedAt,
+            durationMs: Math.max(0, Date.parse(completedAt) - startedMs),
+            scope: scopeRecord,
+            provider: providerName,
+            model: request.model,
+            promptVersion: null,
+            userMessage: request.userMessage,
+            sourcesAvailable,
+            sourcesActuallyRead,
+            response: answer,
+            finishReason: "stop",
+            usage: null,
+            error: null,
+          });
+          options.onEvent?.({ state: "CONTEXT_INSUFFICIENT", diagnostics });
+          return {
+            id: runId,
+            provider: providerName,
+            model: request.model,
+            content: answer,
+            sources: sourcesActuallyRead,
+            scopeId: scope.id,
+            scopeMode: scope.mode,
+            scopeManifestVersion: scope.manifestVersion,
+            promptVersion: null,
+            createdAt: completedAt,
+            finishReason: "stop",
+            usage: null,
+            diagnostics,
+          };
+        }
+        options.onEvent?.({
+          state: "CONTEXT_READY",
+          status: {
+            message: "Approved sources read and verified.",
+            context: {
+              sourceCount: sources.length,
+              estimatedTokens: Math.ceil(
+                sources.reduce(
+                  (sum, source) => sum + source.content.length,
+                  0,
+                ) / 4,
+              ),
+            },
+            progress: undefined,
+          },
+        });
         const csvSources = sources.filter((source) => source.type === "csv");
         if (csvSources.length) {
           if (
@@ -293,6 +432,24 @@ function createContextOrchestrator({
             });
           }
         }
+        // Check source envelopes and question before model warm-up or analytical planning.
+        // CSV has already been reduced to its explicit profile, never silently sliced.
+        diagnostics.sourceBudget = sources.map((source) => ({
+          relativePath: source.relativePath,
+          estimatedTokens: Math.ceil(
+            Buffer.byteLength(source.content, "utf8") / 3,
+          ),
+        }));
+        const preflight = promptBuilder({
+          customInstructions: options.agentConfig?.customInstructions,
+          agentId: options.agentConfig?.id,
+          userMessage: request.userMessage,
+          sources,
+        });
+        const preflightBudget = budgetHistory(preflight.messages, [], settings);
+        diagnostics.contextChanged = Boolean(options.contextChanged);
+        diagnostics.preflightPromptTokens =
+          preflightBudget.diagnostics.estimatedPromptTokens;
         if (options.prepareModel && typeof provider.prepare === "function") {
           stage(
             providerName === "ollama" ? "MODEL_LOADING" : "REMOTE_CONNECTING",
@@ -302,6 +459,7 @@ function createContextOrchestrator({
               provider.prepare(request.model, settings, options.signal),
             ),
           );
+          stage("MODEL_READY");
         }
         if (datasetSession) {
           stage("GENERATING");
@@ -377,21 +535,61 @@ function createContextOrchestrator({
           await datasetSession.close();
           datasetSession = null;
         }
+        if (
+          wantsStatistics(request.userMessage) &&
+          (sources.some((source) => source.type !== "csv") ||
+            /\d\s*[,;]|\b(?:mean|average|delta|difference|sum|change)\s+(?:of|between|from)\s*[+-]?\d/i.test(
+              request.userMessage,
+            ))
+        ) {
+          stage("GENERATING");
+          diagnostics.statistics = await measure("statisticsMs", () =>
+            planStatistics({
+              sources,
+              userMessage: request.userMessage,
+              history: request.history,
+              model: request.model,
+              settings,
+              signal: options.signal,
+              complete: (input) =>
+                recoverTimeout("GENERATING", () =>
+                  provider.complete({ ...input, id: runId, scope }),
+                ),
+            }),
+          );
+        }
         const base = promptBuilder({
+          customInstructions: options.agentConfig?.customInstructions,
+          agentId: options.agentConfig?.id,
           userMessage: request.userMessage,
           sources,
+          statistics: diagnostics.statistics,
         });
         const budget = budgetHistory(base.messages, request.history, settings);
         Object.assign(diagnostics, budget.diagnostics);
         diagnostics.droppedExchanges += options.earlierExchangesDropped ?? 0;
         diagnostics.includedExchanges = budget.history.length / 2;
         const prompt = promptBuilder({
+          customInstructions: options.agentConfig?.customInstructions,
+          agentId: options.agentConfig?.id,
           userMessage: request.userMessage,
           history: budget.history,
           sources,
+          statistics: diagnostics.statistics,
         });
         promptVersion = prompt.promptVersion;
+        options.onEvent?.({
+          state: "CONTEXT_READY",
+          status: {
+            message: "Approved context is ready.",
+            context: {
+              sourceCount: sources.length,
+              estimatedTokens: budget.diagnostics.estimatedPromptTokens,
+            },
+          },
+        });
         stage("GENERATING");
+        const generationStart = performance.now();
         const generate = (messages, answerRepair = false) =>
           recoverTimeout("GENERATING", () =>
             provider.complete({
@@ -404,8 +602,15 @@ function createContextOrchestrator({
               settings,
               answerRepair,
               signal: options.signal,
+              onGenerationStarted: () => {
+                generationStarted = true;
+              },
               onContent: (raw) => {
-                if (csvSources.length) return;
+                generationStarted = true;
+                diagnostics.timeToFirstTokenMs ??= Math.round(
+                  performance.now() - generationStart,
+                );
+                if (csvSources.length || diagnostics.statistics) return;
                 const content = answerPrefix(raw);
                 if (content)
                   options.onEvent?.({ state: "GENERATING", content });
@@ -422,12 +627,26 @@ function createContextOrchestrator({
             response,
             request.userMessage,
             request.history,
+            sourcesActuallyRead,
           );
-          return diagnostics.datasetAnalysis
+          diagnostics.citedSourceIds =
+            JSON.parse(response.content).citations ?? [];
+          return diagnostics.datasetAnalysis || diagnostics.statistics
             ? validateDatasetAnswer(
                 text,
                 [
-                  ...diagnostics.datasetAnalysis.results,
+                  ...(diagnostics.datasetAnalysis?.results ?? []),
+                  ...(diagnostics.statistics?.results ?? []).map((result) => ({
+                    results: [
+                      {
+                        values: [
+                          ...result.inputs,
+                          result.value,
+                          result.formula,
+                        ],
+                      },
+                    ],
+                  })),
                   ...(diagnostics.datasetHistory ?? []).flatMap(
                     (entry) => entry.results,
                   ),
@@ -443,6 +662,7 @@ function createContextOrchestrator({
           answer = validate(response);
         } catch (error) {
           if (
+            diagnostics.timeoutRetryCount ||
             ![
               "task_echo",
               "planning",
@@ -487,9 +707,12 @@ function createContextOrchestrator({
           diagnostics.includedExchanges = repairBudget.history.length / 2;
           const repairedMessages = withCorrection(
             promptBuilder({
+              customInstructions: options.agentConfig?.customInstructions,
+              agentId: options.agentConfig?.id,
               userMessage: request.userMessage,
               history: repairBudget.history,
               sources,
+              statistics: diagnostics.statistics,
             }).messages,
           );
           stage("GENERATING");
@@ -500,6 +723,21 @@ function createContextOrchestrator({
           answer = validate(response);
         }
         if (response.diagnostics) diagnostics.provider = response.diagnostics;
+        if (diagnostics.statistics?.results.length) {
+          answer +=
+            "\n\nCalculated locally:\n" +
+            diagnostics.statistics.results
+              .map(
+                (result) =>
+                  `${result.operation}(${result.inputs.join(", ")}) = ${result.value === null ? "undefined" : Number(result.value.toPrecision(12))}. Inputs: ${[...new Set(result.evidence.map((item) => `${JSON.stringify(item.file)}${item.page ? `, page ${item.page}` : ""}: ${JSON.stringify(item.quote)}`))].join("; ")}.`,
+              )
+              .join("\n");
+        }
+        // This is an explicit model abstention, not a retrieval confidence score.
+        if (answer.startsWith("CONTEXT INSUFFICIENT"))
+          diagnostics.contextInsufficient = true;
+        if (answer.startsWith("LIMITED CONTEXT"))
+          diagnostics.limitedContext = true;
         if (diagnostics.datasetAnalysis) {
           const analyses = [
             diagnostics.datasetAnalysis,
@@ -582,6 +820,24 @@ function createContextOrchestrator({
         });
         return result;
       } catch (error) {
+        if (
+          error.code === "MODEL_CONTEXT_TOO_LARGE" &&
+          diagnostics.sourceBudget
+        ) {
+          error.details = {
+            ...error.details,
+            sourceBudget: diagnostics.sourceBudget,
+          };
+          error.message +=
+            " Source content estimates (UTF-8 bytes / 3, excluding envelopes): " +
+            diagnostics.sourceBudget
+              .map(
+                (source) =>
+                  `${source.relativePath}: ~${source.estimatedTokens} tokens`,
+              )
+              .join("; ") +
+            ".";
+        }
         if (options.signal?.aborted)
           error = new ModelRuntimeError(
             options.signal.reason?.code ?? "MODEL_CANCELLED",

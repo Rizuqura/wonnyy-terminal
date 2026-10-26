@@ -1,4 +1,5 @@
 const { _electron: electron } = require("playwright");
+const { openContextTools } = require("./fixtures/chat-context-tools.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -10,9 +11,9 @@ async function main() {
   const checks = [],
     errors = [];
   const deadline = setTimeout(() => {
-    process.stderr.write("Online desktop smoke exceeded 120 seconds.\n");
+    process.stderr.write("Online desktop smoke exceeded 240 seconds.\n");
     void application?.close().finally(() => process.exit(1));
-  }, 120000);
+  }, 240000);
   const launch = async () => {
     const env = {
       ...process.env,
@@ -37,7 +38,7 @@ async function main() {
     await page.getByRole("textbox", { name: "Chat question" }).waitFor();
   };
   const setup = () =>
-    page.getByRole("button", { name: "AI TERMINAL", exact: true }).click();
+    page.getByRole("button", { name: "SETTINGS", exact: true }).click();
   const chat = async () => {
     await page.getByRole("button", { name: "Back to workspace" }).click();
     await page
@@ -70,6 +71,9 @@ async function main() {
       "asset,weight\nbonds,40",
     );
     await launch();
+    await page.evaluate((root) => {
+      window.onlineVaultPath = root;
+    }, root);
     await page.locator('.file-row[title="a.md"]').click();
     await page
       .locator('.file-row[title="details.csv"]')
@@ -96,17 +100,37 @@ async function main() {
     checks.push(
       "Station multi-selection review approves Markdown and CSV together for chat",
     );
+    await openContextTools(page);
+    await page
+      .getByRole("button", { name: "Save Active Context as box", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "New Context Box name" })
+      .fill("Online research");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page
+      .getByRole("button", { name: "+ New Chat", exact: true })
+      .first()
+      .click();
+    const picker = page.getByRole("dialog", { name: "New Wonnyy Agent chat" });
+    await picker.getByRole("radio").check();
+    await picker
+      .getByRole("button", { name: "Create Chat", exact: true })
+      .click();
+    await picker.waitFor({ state: "hidden" });
     await send("Summarize this");
-    const originalId = await page
-      .getByRole("combobox", { name: "Conversation history" })
-      .inputValue();
+    const originalId = await page.evaluate(() =>
+      localStorage.getItem("qterminal-active-chat:" + window.onlineVaultPath),
+    );
     await setup();
+    await page
+      .getByRole("navigation", { name: "AI providers" })
+      .getByRole("button", { name: /Gemini/ })
+      .click();
     await page
       .getByLabel("Gemini API key", { exact: true })
       .fill("AQ.synthetic-smoke-key");
-    await page
-      .getByRole("button", { name: "Save API key", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Save key", exact: true }).click();
     await page
       .getByRole("button", { name: "Use online", exact: true })
       .waitFor();
@@ -144,9 +168,9 @@ async function main() {
       /sent to Google Gemini/,
     );
     assert.equal(
-      await page
-        .getByRole("combobox", { name: "Conversation history" })
-        .inputValue(),
+      await page.evaluate(() =>
+        localStorage.getItem("qterminal-active-chat:" + window.onlineVaultPath),
+      ),
       originalId,
     );
     await send("What did we discuss?");
@@ -191,22 +215,25 @@ async function main() {
     );
     await setup();
     await page
+      .getByRole("navigation", { name: "AI providers" })
+      .getByRole("button", { name: /NVIDIA/ })
+      .click();
+    await page
       .getByLabel("NVIDIA API key", { exact: true })
       .fill("nvapi-synthetic-smoke-key");
     await application.evaluate(() => {
       globalThis.onlineSmoke.nvidiaModelStatuses["deepseek-ai/deepseek-smoke"] =
         404;
     });
-    await page
-      .getByRole("button", { name: "Save NVIDIA API key", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Save key", exact: true }).click();
     const nvidiaModel = page
       .locator('[aria-label="NVIDIA models"] article')
       .filter({ hasText: "nvidia/nemotron-smoke" });
-    await nvidiaModel.getByText(/Passed synthetic source check/).waitFor();
+    await nvidiaModel.getByText(/Check passed/).waitFor();
+    await page.getByText("Connection checks", { exact: true }).click();
     await page
-      .locator('[aria-label="NVIDIA models"]')
-      .getByText(/1 starred \/ 2 checked/)
+      .locator('[aria-label="Model checks and starred models"]')
+      .getByText(/1 passed \/ 2 checked/)
       .waitFor();
     assert.match(
       await page
@@ -225,7 +252,7 @@ async function main() {
       globalThis.onlineSmoke.checkDelayMs = 10000;
     });
     await page
-      .locator('[aria-label="NVIDIA models"]')
+      .locator('[aria-label="Model checks and starred models"]')
       .getByRole("button", { name: "Recheck all models" })
       .click();
     await page
@@ -238,7 +265,7 @@ async function main() {
       })
       .waitFor();
     await page
-      .locator('[aria-label="NVIDIA models"]')
+      .locator('[aria-label="Model checks and starred models"]')
       .getByRole("button", { name: "Recheck all models" })
       .click();
     await page
@@ -249,11 +276,10 @@ async function main() {
       true,
     );
     assert.equal(
-      await page
-        .getByRole("button", { name: "Refresh Local Models / Online Models" })
-        .isEnabled(),
+      await page.getByRole("button", { name: "Refresh models" }).isEnabled(),
       true,
     );
+    await page.getByText("Generation settings", { exact: true }).click();
     await page.getByLabel("Output limit", { exact: true }).fill("1024");
     assert.equal(
       await nvidiaModel
@@ -266,21 +292,21 @@ async function main() {
       .click();
     await page.waitForFunction(() =>
       document
-        .querySelector(".ai-overview")
+        .querySelector(".ai-current")
         ?.textContent.includes("nvidia/nemotron-smoke"),
     );
     await application.evaluate(() => {
       globalThis.onlineSmoke.checkDelayMs = 0;
     });
     checks.push(
-      "AI Terminal remains interactive during scans; choosing a model aborts the stalled check and applies the selection",
+      "Settings remains interactive during scans; choosing a model aborts the stalled check and applies the selection",
     );
     await chat();
     await send("Continue through NVIDIA");
     assert.equal(
-      await page
-        .getByRole("combobox", { name: "Conversation history" })
-        .inputValue(),
+      await page.evaluate(() =>
+        localStorage.getItem("qterminal-active-chat:" + window.onlineVaultPath),
+      ),
       originalId,
     );
     assert.match(
@@ -296,10 +322,17 @@ async function main() {
     );
     await application.close();
     await launch();
+    await page.evaluate((root) => {
+      window.onlineVaultPath = root;
+    }, root);
     await setup();
     await page
-      .getByText("API key saved on this device", { exact: true })
+      .getByText("Your key is saved securely on this device.", { exact: true })
       .waitFor();
+    await page
+      .getByRole("navigation", { name: "AI providers" })
+      .getByRole("button", { name: /Ollama/ })
+      .click();
     await page
       .locator('[aria-label="Local models"] article')
       .getByRole("button", { name: "Use", exact: true })
@@ -307,9 +340,9 @@ async function main() {
     await chat();
     await send("Continue locally");
     assert.equal(
-      await page
-        .getByRole("combobox", { name: "Conversation history" })
-        .inputValue(),
+      await page.evaluate(() =>
+        localStorage.getItem("qterminal-active-chat:" + window.onlineVaultPath),
+      ),
       originalId,
     );
     assert.match(
@@ -318,8 +351,10 @@ async function main() {
     );
     await setup();
     await page
-      .getByRole("button", { name: "Remove API key", exact: true })
+      .getByRole("navigation", { name: "AI providers" })
+      .getByRole("button", { name: /Gemini/ })
       .click();
+    await page.getByRole("button", { name: "Remove key", exact: true }).click();
     await page
       .locator('[aria-label="Gemini credentials"]')
       .getByText("Not configured", { exact: true })

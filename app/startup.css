@@ -1,0 +1,81 @@
+.startup-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #0d1117;
+  color: #dce7ef;
+  font-family: "Segoe UI", sans-serif;
+}
+.startup-card {
+  width: min(360px, 100%);
+}
+.startup-brand {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 20px;
+  object-fit: contain;
+}
+.startup-card h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+}
+.startup-card p {
+  margin: 24px 0 12px;
+  font-size: 13px;
+}
+.startup-card .startup-version {
+  margin: 6px 0 36px;
+  color: #8b9eae;
+}
+.startup-card progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  appearance: none;
+  background: #1b2933;
+  accent-color: #9bd5c2;
+}
+.startup-card progress::-webkit-progress-bar {
+  background: #1b2933;
+}
+.startup-card progress::-webkit-progress-value {
+  background: #9bd5c2;
+  border-radius: 6px;
+}
+.startup-caption {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  color: #8b9eae;
+  font-size: 11px;
+}
+.startup-card .startup-error {
+  color: #efb4a6;
+  overflow-wrap: anywhere;
+}
+.startup-card button {
+  margin-top: 28px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #18252e;
+  color: #b8c9d6;
+  cursor: pointer;
+}
+.startup-card button:hover {
+  background: #20323d;
+  box-shadow: 0 4px 14px #0003;
+}
+.startup-card button:focus-visible {
+  outline: 2px solid #9bd5c2;
+  outline-offset: 4px;
+}

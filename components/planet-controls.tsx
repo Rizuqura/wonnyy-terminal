@@ -8,9 +8,11 @@ export interface PlanetControlsProps {
   onReset: () => void;
   asteroidsVisible: boolean;
   onToggleAsteroids: () => void;
+  flatMode: boolean;
+  onToggleFlatMode: () => void;
 }
 
-export function PlanetControls({ onZoomIn, onZoomOut, zoomPercent, onFocus, onReset, asteroidsVisible, onToggleAsteroids }: Readonly<PlanetControlsProps>) {
+export function PlanetControls({ onZoomIn, onZoomOut, zoomPercent, onFocus, onReset, asteroidsVisible, onToggleAsteroids, flatMode, onToggleFlatMode }: Readonly<PlanetControlsProps>) {
   return <div className="pctrl" onPointerDown={(event) => event.stopPropagation()}>
     <section className="pctrl-guide" aria-label="Planet View control guide">
       <b>CONTROLS</b>
@@ -25,6 +27,11 @@ export function PlanetControls({ onZoomIn, onZoomOut, zoomPercent, onFocus, onRe
       </dl>
       <p>Use Pan mode for ordinary dragging. After selecting, use + beside a Station to assign the group.</p>
     </section>
+    <label className="pctrl-check" title="Simple flat colors without shadows, glow, or 3D shading">
+      <input type="checkbox" checked={flatMode} onChange={onToggleFlatMode} />
+      <span className="pctrl-box" aria-hidden="true">{flatMode ? "[x]" : "[ ]"}</span>
+      FLAT VIEW (LOW GPU)
+    </label>
     <label className="pctrl-check">
       <input type="checkbox" checked={asteroidsVisible} onChange={onToggleAsteroids} />
       <span className="pctrl-box" aria-hidden="true">{asteroidsVisible ? "[x]" : "[ ]"}</span>

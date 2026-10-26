@@ -2,715 +2,724 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ChatController } from "../chat/use-chat-runtime";
-import type { ModelSettings as Settings } from "../../types/ai";
+import type {
+  ModelDescriptor,
+  ModelSettings as Settings,
+} from "../../types/ai";
+
+const providers = [
+  {
+    id: "ollama",
+    name: "Ollama",
+    description: "Run on your device",
+    mark: "O",
+    url: "https://ollama.com",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    description: "One key, more models",
+    mark: "↗",
+    url: "https://openrouter.ai/settings/keys",
+  },
+  {
+    id: "gemini",
+    name: "Gemini",
+    description: "Models from Google",
+    mark: "G",
+    url: "https://aistudio.google.com/apikey",
+  },
+  {
+    id: "nvidia",
+    name: "NVIDIA NIM",
+    description: "Hosted inference",
+    mark: "N",
+    url: "https://build.nvidia.com",
+  },
+] as const;
+type ProviderId = Settings["providerId"];
 
 export function ModelSettings({
   chat,
   onClose,
+  vaultPath,
+  changingVault,
+  onChangeVault,
 }: {
   chat: ChatController;
   onClose: () => void;
+  vaultPath: string | null;
+  changingVault: boolean;
+  onChangeVault: () => void;
 }) {
-  const keyInput = useRef<HTMLInputElement>(null);
-  const starredModels = (chat.registry?.models ?? [])
-    .filter(
-      (model) =>
-        chat.modelChecks[model.providerId + "/" + model.modelId]?.passed,
-    )
-    .sort(
-      (a, b) =>
-        chat.modelChecks[a.providerId + "/" + a.modelId].latencyMs -
-        chat.modelChecks[b.providerId + "/" + b.modelId].latencyMs,
-    );
-  const nvidiaKeyInput = useRef<HTMLInputElement>(null);
-  const nvidia = chat.registry?.providers.find(
-    (provider) => provider.id === "nvidia",
+  const [providerId, setProviderId] = useState<ProviderId>(
+    chat.registry?.settings.providerId ?? "ollama",
   );
-  const providerName =
-    chat.registry?.settings.providerId === "nvidia" ? "NVIDIA NIM" : "Gemini";
-  const remote =
-    !!chat.registry && chat.registry.settings.providerId !== "ollama";
-  const gemini = chat.registry?.providers.find(
-    (provider) => provider.id === "gemini",
-  );
+  const [query, setQuery] = useState("");
+  const [downloadName, setDownloadName] = useState("qwen3:4b");
   const [draft, setDraft] = useState<Settings | null>(
     chat.registry?.settings ?? null,
   );
+  const keyInput = useRef<HTMLInputElement>(null);
+  const savingKey = useRef(false);
+  const [keySaving, setKeySaving] = useState(false);
+  const [keySavedFor, setKeySavedFor] = useState<ProviderId | null>(null);
   useEffect(
     () => setDraft(chat.registry?.settings ?? null),
     [chat.registry?.settings],
   );
-  const selectedModel = chat.registry?.models.find(
-    (model) =>
-      model.providerId === chat.registry?.settings.providerId &&
-      model.modelId === chat.registry?.settings.modelId,
+  const selected = providers.find((provider) => provider.id === providerId)!;
+  const status = chat.registry?.providers.find(
+    (provider) => provider.id === providerId,
   );
+  const active = chat.registry?.settings;
+  const activeProvider = providers.find(
+    (provider) => provider.id === active?.providerId,
+  );
+  const activeAvailable = chat.registry?.models.some(
+    (model) =>
+      model.providerId === active?.providerId &&
+      model.modelId === active?.modelId,
+  );
+  const remote = providerId !== "ollama";
   const running = Boolean(chat.runtime.requestId);
-  const readiness =
-    chat.runtime.state === "RESTART_REQUIRED"
-      ? {
-          label: "Restart required",
-          tone: "error",
-          detail: "Restart Wonnyy to reconnect the desktop model service.",
-        }
-      : !chat.registry
-        ? {
-            label: chat.runtime.error
-              ? "Connection unavailable"
-              : "Checking AI",
-            tone: "waiting",
-            detail: chat.runtime.error ?? "Connecting to the model service.",
-          }
-        : !chat.registry.online || chat.runtime.state === "MODEL_OFFLINE"
-          ? {
-              label: remote
-                ? (chat.registry.error?.code.replaceAll("_", " ") ??
-                  `${providerName} unavailable`)
-                : "Ollama offline",
-              tone: "error",
-              detail: remote
-                ? (chat.registry.error?.message ??
-                  "Configure your online provider below, then refresh models.")
-                : "Start Ollama on this computer, then refresh local models.",
-            }
-          : !selectedModel || chat.runtime.state === "MODEL_MISSING"
-            ? {
-                label: "Model needed",
-                tone: "waiting",
-                detail:
-                  "Choose an available model below. Configure an online provider or install a model in Ollama, then refresh.",
-              }
-            : running
-              ? {
-                  label: chat.runtime.state.replaceAll("_", " "),
-                  tone: "waiting",
-                  detail:
-                    "Your current response is still running. You can stop it here before changing models.",
-                }
-              : chat.runtime.error
-                ? {
-                    label: "Needs attention",
-                    tone: "error",
-                    detail: chat.runtime.error,
-                  }
-                : chat.busy
-                  ? {
-                      label: "Updating settings",
-                      tone: "waiting",
-                      detail: "Applying your model configuration.",
-                    }
-                  : chat.unavailableReason || !chat.context || !chat.attached
-                    ? {
-                        label: "Context needed",
-                        tone: "waiting",
-                        detail:
-                          chat.unavailableReason ??
-                          "Approve a Markdown source in Planet View, or resume your conversation's source.",
-                      }
-                    : {
-                        label: "Ready to chat",
-                        tone: "ready",
-                        detail: remote
-                          ? `Online model selected. Approved context and included chat history will be sent to ${providerName}.`
-                          : "Local model selected and approved context attached. The model loads when you send a message.",
-                      };
+  const pulling = chat.pulls.some((pull) => pull.phase === "model-pulling");
+  const catalog = (chat.registry?.models ?? []).filter(
+    (model) => model.providerId === providerId,
+  );
+  const models = catalog
+    .filter((model) =>
+      `${model.displayName} ${model.modelId}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+    )
+    .sort((a, b) => {
+      const first = chat.modelChecks[a.providerId + "/" + a.modelId],
+        second = chat.modelChecks[b.providerId + "/" + b.modelId];
+      return (
+        Number(Boolean(second?.passed)) - Number(Boolean(first?.passed)) ||
+        (first?.passed && second?.passed
+          ? first.latencyMs - second.latencyMs
+          : 0)
+      );
+    });
+  const useModel = (model: ModelDescriptor) => {
+    const contextWindow = Math.min(
+      active?.contextWindow ?? 8192,
+      model.contextLength ?? 32768,
+    );
+    const outputLimit = Math.min(
+      active?.outputLimit ?? 2048,
+      model.outputLimit ?? 8192,
+      contextWindow - 513,
+    );
+    void chat.saveSettings({
+      providerId,
+      modelId: model.modelId,
+      contextWindow,
+      outputLimit,
+    });
+  };
   return (
-    <section className="model-settings ai-terminal" aria-label="AI Terminal">
-      <header>
-        <div>
-          <span className="ai-eyebrow">AI / CONFIGURATION</span>
-          <h1>AI Terminal</h1>
-          <p>Set up your model. Know when it is ready.</p>
-        </div>
-        <button onClick={onClose}>Back to workspace</button>
-      </header>
-      <section
-        className="model-check-dashboard"
-        aria-label="Model checks and starred models"
-      >
-        <div className="model-check-toolbar">
-          <strong>Model checks · {starredModels.length} starred</strong>
-          {chat.modelScan?.running && (
-            <button onClick={chat.stopModelChecks}>Stop checks</button>
-          )}
-          {(["gemini", "nvidia"] as const).map((providerId) => (
+    <section className="model-settings ai-terminal" aria-label="Settings">
+      <div className="ai-shell">
+        <header className="ai-page-header">
+          <div>
+            <span className="ai-eyebrow">YOUR WORKSPACE</span>
+            <h1>Settings</h1>
+            <p>
+              Manage your vault, providers, models and generation preferences.
+            </p>
+          </div>
+          <button className="ai-back" onClick={onClose}>
+            Back to workspace <span aria-hidden="true">↗</span>
+          </button>
+        </header>
+        <section
+          className="ai-connect-card settings-vault-card"
+          aria-label="Knowledge vault"
+        >
+          <div className="ai-section-heading">
+            <div>
+              <h2>Knowledge vault</h2>
+              <p className="settings-vault-path">
+                {vaultPath ?? "No vault selected"}
+              </p>
+            </div>
+            <button disabled={changingVault} onClick={onChangeVault}>
+              Change vault folder
+            </button>
+          </div>
+        </section>
+        <div className="ai-current" role="status" aria-label="AI readiness">
+          <span
+            className={`ai-status-dot${chat.registry?.online && activeAvailable ? " connected" : ""}`}
+          />
+          <div className="model-active">
+            <strong>{active?.modelId ?? "No model selected"}</strong>
+            <small>
+              {activeProvider?.name ?? "Connecting"}
+              {active
+                ? active.providerId === "ollama"
+                  ? " · Local"
+                  : " · Cloud"
+                : ""}
+              {chat.canSend
+                ? " - Ready to chat"
+                : chat.registry?.online
+                  ? activeAvailable
+                    ? " - Connected"
+                    : " - Model unavailable"
+                  : " - Not connected"}
+            </small>
+          </div>
+          {running ? (
             <button
-              key={providerId}
-              disabled={
-                chat.busy ||
-                !chat.registry?.providers.find(
-                  (provider) => provider.id === providerId,
-                )?.configured
-              }
-              onClick={() => void chat.recheckModels(providerId)}
+              onClick={chat.stop}
+              disabled={chat.runtime.state === "CANCELLING"}
             >
-              Check {providerId === "gemini" ? "Gemini" : "NVIDIA"} models
+              Stop response
+            </button>
+          ) : (
+            <span className="ai-chip">
+              {chat.attached
+                ? `${chat.context?.sources.length ?? 0} ${chat.context?.sources.length === 1 ? "source" : "sources"} attached`
+                : "Choose a Context Box to chat"}
+            </span>
+          )}
+        </div>
+        <nav className="ai-provider-tabs" aria-label="AI providers">
+          {providers.map((provider) => (
+            <button
+              key={provider.id}
+              aria-pressed={providerId === provider.id}
+              onClick={() => {
+                if (providerId === provider.id) return;
+                setKeySavedFor(null);
+                setProviderId(provider.id);
+                setQuery("");
+                if (keyInput.current) keyInput.current.value = "";
+              }}
+            >
+              <span className="ai-provider-mark" aria-hidden="true">
+                {provider.mark}
+              </span>
+              <strong>{provider.name}</strong>
+              <small>{provider.description}</small>
             </button>
           ))}
-        </div>
-        <p role="status">
-          {chat.modelScan?.running
-            ? `Checking ${chat.modelScan.providerId}: ${chat.modelScan.completed}/${chat.modelScan.total} — ${chat.modelScan.model ?? "preparing"}`
-            : (chat.modelScan?.note ??
-              "Save an API key or start a check. Passing models appear here with a star.")}
-        </p>
-        <p>
-          Settings stay available during checks. Choosing a model or saving
-          settings stops the scan. Tests use synthetic data only.
-        </p>
-        {starredModels.length ? (
-          <div className="starred-model-list">
-            {starredModels.map((model) => (
-              <article key={model.providerId + "/" + model.modelId}>
-                <span>
-                  <span className="model-check-star" aria-hidden="true">
-                    ★
-                  </span>{" "}
-                  {model.displayName} <small>· {model.providerId}</small>
-                </span>
+        </nav>
+        <section
+          className="ai-connect-card"
+          aria-label={`${selected.name === "NVIDIA NIM" ? "NVIDIA" : selected.name} credentials`}
+        >
+          <div className="ai-section-heading">
+            <div>
+              <h2>{selected.name}</h2>
+              <p>
+                {remote
+                  ? status?.configured
+                    ? "Your key is saved securely on this device."
+                    : "Add your API key to discover available models."
+                  : "Connect to Ollama running on this computer."}
+              </p>
+            </div>
+            <span className={`ai-chip${status?.online ? " success" : ""}`}>
+              {status?.online
+                ? "Connected"
+                : status?.configured
+                  ? "Not connected"
+                  : remote
+                    ? "Not configured"
+                    : "Offline"}
+            </span>
+          </div>
+          {remote ? (
+            <>
+              <form
+                className="ai-key-form"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const input = keyInput.current;
+                  const key = input?.value.trim();
+                  if (
+                    !input ||
+                    !key ||
+                    chat.busy ||
+                    !status ||
+                    status.secureStorageAvailable === false ||
+                    savingKey.current
+                  )
+                    return;
+                  savingKey.current = true;
+                  setKeySaving(true);
+                  setKeySavedFor(null);
+                  try {
+                    await chat.saveCredential(key, providerId, () => {
+                      if (input !== keyInput.current) return;
+                      setKeySavedFor(providerId);
+                      if (input.value.trim() === key) input.value = "";
+                    });
+                  } finally {
+                    savingKey.current = false;
+                    setKeySaving(false);
+                  }
+                }}
+              >
+                <label>
+                  {selected.name === "NVIDIA NIM" ? "NVIDIA" : selected.name}{" "}
+                  API key
+                  <input
+                    key={providerId}
+                    ref={keyInput}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                    minLength={10}
+                    maxLength={512}
+                    placeholder={
+                      status?.configured
+                        ? "Enter a replacement key"
+                        : "Paste your API key"
+                    }
+                  />
+                </label>
                 <button
-                  disabled={chat.busy || model.active}
-                  onClick={() =>
-                    chat.saveSettings({
-                      providerId: model.providerId,
-                      modelId: model.modelId,
-                    })
+                  className="ai-primary"
+                  disabled={
+                    chat.busy ||
+                    keySaving ||
+                    !status ||
+                    status.secureStorageAvailable === false
                   }
                 >
-                  {model.active ? "Using" : "Use starred model"}
+                  {keySaving ? "Saving key..." : "Save key"}
                 </button>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p>
-            No passing models yet. Progress and results update as checks finish.
-          </p>
-        )}
-      </section>
-      <div
-        className={`ai-readiness ai-readiness-${readiness.tone}`}
-        role="status"
-        aria-label="AI readiness"
-      >
-        <span className="ai-status-dot" aria-hidden="true" />
-        <div>
-          <strong>{readiness.label}</strong>
-          <p>{readiness.detail}</p>
-        </div>
-        {running && (
-          <button
-            onClick={chat.stop}
-            disabled={chat.runtime.state === "CANCELLING"}
-          >
-            Stop response
-          </button>
-        )}
-      </div>
-      <dl className="ai-overview">
-        <div>
-          <dt>PROVIDER</dt>
-          <dd>
-            {remote ? `${providerName} · ONLINE` : "Ollama · LOCAL"}{" "}
+                {status?.configured && (
+                  <button
+                    type="button"
+                    disabled={chat.busy}
+                    onClick={() => void chat.removeCredential(providerId)}
+                  >
+                    Remove key
+                  </button>
+                )}
+              </form>
+              {keySavedFor === providerId && status?.configured && (
+                <p className="ai-subtle" role="status">
+                  Key saved securely.
+                  {status?.error
+                    ? " Model discovery failed; see the connection error below."
+                    : ""}
+                </p>
+              )}
+              {chat.runtime.error && (
+                <p className="ai-inline-error" role="alert">
+                  {chat.runtime.error}
+                </p>
+              )}
+              {!status && (
+                <p className="ai-subtle" role="status">
+                  {chat.runtime.error
+                    ? chat.runtime.error
+                    : "Connecting to the desktop app. You can enter your key while it connects."}
+                </p>
+              )}
+              {status && chat.busy && !keySaving && (
+                <p className="ai-subtle" role="status">
+                  You can enter your key now. Save it when the current operation
+                  finishes.
+                </p>
+              )}
+              <div className="ai-key-footer">
+                <a href={selected.url} target="_blank" rel="noreferrer">
+                  Get an API key ↗
+                </a>
+                <span>
+                  {providerId === "openrouter"
+                    ? "Usage is billed to your OpenRouter account."
+                    : "Usage and availability depend on your provider account."}
+                </span>
+              </div>
+              {status?.secureStorageAvailable === false && (
+                <p role="alert">
+                  Secure credential storage is unavailable on this device.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="ai-subtle">
+              No API key needed. Ollama runs inference locally.
+            </p>
+          )}
+          {status?.error && (
+            <p className="ai-inline-error" role="status">
+              {status.error.message}
+            </p>
+          )}
+        </section>
+        {chat.modelScan?.running && (
+          <div className="ai-scan-status" role="status">
             <span>
-              {chat.registry
-                ? chat.registry.online
-                  ? "Online"
-                  : "Offline"
-                : "Checking"}
+              Checking {chat.modelScan.providerId} · {chat.modelScan.completed}/
+              {chat.modelScan.total}
+              <small>{chat.modelScan.model}</small>
             </span>
-          </dd>
-        </div>
-        <div>
-          <dt>SELECTED MODEL</dt>
-          <dd>{chat.registry?.settings.modelId ?? "None selected"}</dd>
-        </div>
-        <div>
-          <dt>ACTIVE CONTEXT</dt>
-          <dd>
-            {chat.context?.sources
-              .map((source) => source.relativePath)
-              .join(", ") ?? "No approved source"}
-          </dd>
-        </div>
-      </dl>
-      <p className="ai-privacy" role="note">
-        {remote
-          ? `ONLINE: Your approved source, question, and included conversation history are sent to ${providerName}.`
-          : "LOCAL: Inference runs on this device through Ollama."}
-      </p>
-      <button onClick={chat.refreshModels} disabled={chat.busy}>
-        Refresh Local Models / Online Models
-      </button>
-      <section className="provider-credentials" aria-label="Gemini credentials">
-        <h2>Online · Gemini</h2>
-        <p>
-          {gemini?.configured
-            ? "API key saved on this device"
-            : "Not configured"}
-        </p>
-        <p>
-          Gemini free-tier data may be used to improve Google products. Quotas
-          and charges depend on your Google project. Model discovery does not
-          establish free access.
-        </p>
-        <p>
-          <a
-            href="https://aistudio.google.com/apikey"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Get a Gemini API key
-          </a>{" "}
-          ·{" "}
-          <a
-            href="https://ai.google.dev/gemini-api/docs/pricing"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Pricing and data use
-          </a>
-        </p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const key = keyInput.current?.value.trim();
-            if (!key || chat.busy) return;
-            if (keyInput.current) keyInput.current.value = "";
-            void chat.saveCredential(key);
-          }}
-        >
-          <label>
-            Gemini API key
-            <input
-              ref={keyInput}
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              minLength={10}
-              maxLength={512}
-              required
-              disabled={chat.busy || gemini?.secureStorageAvailable === false}
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={chat.busy || gemini?.secureStorageAvailable === false}
-          >
-            Save API key
-          </button>
-          <button
-            type="button"
-            disabled={chat.busy || !gemini?.configured}
-            onClick={() => void chat.removeCredential()}
-          >
-            Remove API key
-          </button>
-        </form>
-        {gemini?.secureStorageAvailable === false && (
-          <p role="alert">
-            Secure credential storage is unavailable on this device.
-          </p>
+            <button onClick={chat.stopModelChecks}>Stop checks</button>
+          </div>
         )}
-        {gemini?.error && <p role="status">{gemini.error.message}</p>}
-        <p>
-          Saving a key checks connectivity and discovers models. Choose Use
-          online below to enable remote inference. No source content is sent
-          during discovery.
-        </p>
-      </section>
-      <section className="provider-credentials" aria-label="NVIDIA credentials">
-        <h2>Online · NVIDIA NIM</h2>
-        <p>
-          {nvidia?.configured
-            ? nvidia.online
-              ? "API key saved · Catalog reachable"
-              : "API key saved · Catalog unavailable"
-            : "Not configured"}
-        </p>
-        <p>
-          Refresh models to discover NVIDIA chat candidates. A catalog listing
-          does not prove inference access.
-        </p>
-        <p>
-          Approved context and included conversation history will be sent to
-          NVIDIA. Access, quotas, and pricing depend on your NVIDIA account.
-        </p>
-        <a href="https://build.nvidia.com" target="_blank" rel="noreferrer">
-          Get an NVIDIA API key
-        </a>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const key = nvidiaKeyInput.current?.value.trim();
-            if (!key || chat.busy) return;
-            if (nvidiaKeyInput.current) nvidiaKeyInput.current.value = "";
-            void chat.saveCredential(key, "nvidia");
-          }}
-        >
-          <label>
-            NVIDIA API key
-            <input
-              ref={nvidiaKeyInput}
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              minLength={10}
-              maxLength={512}
-              required
-              disabled={
-                chat.busy || !nvidia || nvidia.secureStorageAvailable === false
-              }
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={
-              chat.busy || !nvidia || nvidia.secureStorageAvailable === false
-            }
-          >
-            Save NVIDIA API key
-          </button>
-          <button
-            type="button"
-            disabled={chat.busy || !nvidia?.configured}
-            onClick={() => void chat.removeCredential("nvidia")}
-          >
-            Remove NVIDIA API key
-          </button>
-        </form>
-        {nvidia?.secureStorageAvailable === false && (
-          <p role="alert">
-            Secure credential storage is unavailable on this device.
-          </p>
-        )}
-        {nvidia?.error && <p role="status">{nvidia.error.message}</p>}
-      </section>
-      {(["ollama", "gemini", "nvidia"] as const).map((providerId) => (
         <section
-          key={providerId}
+          className="ai-models"
           aria-label={
             providerId === "ollama"
               ? "Local models"
               : providerId === "nvidia"
                 ? "NVIDIA models"
-                : "Online models"
+                : providerId === "openrouter"
+                  ? "OpenRouter models"
+                  : "Online models"
           }
         >
-          <h2>
-            {providerId === "ollama"
-              ? "Local models"
-              : providerId === "nvidia"
-                ? "NVIDIA models"
-                : "Online models"}
-          </h2>
-          <p>
-            {providerId === "ollama"
-              ? "Choose the installed model used for your next answer."
-              : "Choose a discovered text model. Availability and quotas depend on your provider account."}
-          </p>
+          <div className="ai-section-heading">
+            <div>
+              <h2>
+                Choose a model <span>{catalog.length}</span>
+              </h2>
+              <p>
+                Used for your next answer. Your conversation stays with you.
+              </p>
+            </div>
+            <button disabled={chat.busy} onClick={chat.refreshModels}>
+              Refresh models
+            </button>
+          </div>
+          <label className="ai-model-search">
+            <span className="sr-only">Search models</span>
+            <input
+              aria-label="Search models"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={`Search ${selected.name} models…`}
+            />
+          </label>
           <div className="model-list">
-            {providerId !== "ollama" && (
-              <div className="model-check-summary" role="status">
+            {models.map((model) => {
+              const check =
+                chat.modelChecks[model.providerId + "/" + model.modelId];
+              return (
+                <article key={model.modelId}>
+                  <div className="ai-model-name">
+                    <strong>{model.displayName}</strong>
+                    <small>{model.modelId}</small>
+                    <span
+                      title={
+                        check
+                          ? `Checked ${new Date(check.checkedAt).toLocaleString()}`
+                          : undefined
+                      }
+                      className={check?.passed ? "model-check-star" : undefined}
+                    >
+                      {model.contextLength
+                        ? `${model.contextLength.toLocaleString()} context`
+                        : model.location === "local"
+                          ? "Installed locally"
+                          : "Cloud model"}
+                      {check
+                        ? ` · ${check.passed ? "\u2605 Check passed" : "Check failed"} · ${check.latencyMs} ms`
+                        : ""}
+                    </span>
+                  </div>
+                  <div className="ai-row-actions">
+                    {remote && (
+                      <button
+                        disabled={chat.busy}
+                        onClick={() =>
+                          void chat.checkModel(providerId, model.modelId)
+                        }
+                      >
+                        {chat.modelScan?.running &&
+                        chat.modelScan.model === model.modelId
+                          ? "Checking…"
+                          : "Check model"}
+                      </button>
+                    )}
+                    <button
+                      className={model.active ? "ai-selected" : "ai-primary"}
+                      disabled={
+                        chat.busy ||
+                        model.active ||
+                        (model.contextLength !== null &&
+                          model.contextLength < 2048)
+                      }
+                      onClick={() => useModel(model)}
+                    >
+                      {model.active
+                        ? "Using"
+                        : model.location === "remote"
+                          ? "Use online"
+                          : "Use"}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+            {!models.length && (
+              <div className="ai-empty">
+                <strong>
+                  {catalog.length
+                    ? "No matching models"
+                    : remote && !status?.configured
+                      ? "Connect your provider first"
+                      : "No models available yet"}
+                </strong>
                 <p>
-                  {
-                    Object.values(chat.modelChecks).filter(
-                      (check) =>
-                        check.providerId === providerId && check.passed,
-                    ).length
-                  }{" "}
-                  starred /{" "}
-                  {
-                    Object.values(chat.modelChecks).filter(
-                      (check) => check.providerId === providerId,
-                    ).length
-                  }{" "}
-                  checked. Stars mark a successful synthetic source check, not
-                  guaranteed reliability or free access.
+                  {catalog.length
+                    ? "Try a different model name."
+                    : remote
+                      ? "Save a key, then refresh the model catalog."
+                      : "Start Ollama and install a model, then refresh."}
                 </p>
-                <p>
-                  Saving an API key automatically checks its catalog with
-                  synthetic data only. Checks use provider quota and may take
-                  several minutes.
-                </p>
-                {chat.modelScan?.providerId === providerId && (
-                  <p>
-                    {chat.modelScan.running
-                      ? `Checking ${chat.modelScan.completed}/${chat.modelScan.total}: ${chat.modelScan.model ?? "preparing"}`
-                      : chat.modelScan.note}
-                  </p>
-                )}
-                {chat.modelScan?.providerId === providerId &&
-                chat.modelScan.running ? (
-                  <button onClick={chat.stopModelChecks}>
-                    Stop provider checks
-                  </button>
-                ) : (
-                  <button
-                    disabled={
-                      chat.busy ||
-                      !chat.registry?.providers.find((p) => p.id === providerId)
-                        ?.configured
-                    }
-                    onClick={() => void chat.recheckModels(providerId)}
-                  >
-                    Recheck all models
-                  </button>
-                )}
               </div>
             )}
-            {!chat.registry?.models.some(
-              (model) => model.providerId === providerId,
-            ) && (
-              <p className="ai-empty">
-                No {providerId === "ollama" ? "local" : "online"} models
-                available.{" "}
-                {providerId === "ollama"
-                  ? "Start Ollama or install a model, then refresh."
-                  : "Configure this provider and refresh models."}
-              </p>
-            )}
-            {chat.registry?.models
-              .filter((model) => model.providerId === providerId)
-              .sort((a, b) => {
-                if (providerId === "ollama") return 0;
-                const ac = chat.modelChecks[a.providerId + "/" + a.modelId];
-                const bc = chat.modelChecks[b.providerId + "/" + b.modelId];
-                return (
-                  Number(!!bc?.passed) - Number(!!ac?.passed) ||
-                  (ac?.passed && bc?.passed
-                    ? ac.latencyMs - bc.latencyMs
-                    : 0) ||
-                  a.displayName.localeCompare(b.displayName)
-                );
-              })
-              .map((model) => (
-                <article
-                  key={model.providerId + "/" + model.modelId}
-                  className={model.active ? "model-active" : undefined}
-                >
-                  <div>
-                    <strong>
-                      {chat.modelChecks[model.providerId + "/" + model.modelId]
-                        ?.passed && (
-                        <span
-                          className="model-check-star"
-                          aria-label="Passed model check"
-                          title="Passed synthetic source check"
-                        >
-                          &#9733;{" "}
-                        </span>
-                      )}
-                      {model.displayName}
-                    </strong>
-                    <p>
-                      {model.modelId} ·{" "}
-                      {model.location === "local"
-                        ? "Installed · LOCAL"
-                        : "ONLINE · Pricing depends on your project"}
-                    </p>
-                    {model.warnings.map((warning) => (
-                      <p key={warning}>{warning}</p>
-                    ))}
-                    {model.providerId !== "ollama" &&
-                      chat.modelChecks[
-                        model.providerId + "/" + model.modelId
-                      ] && (
-                        <p role="status">
-                          {
-                            chat.modelChecks[
-                              model.providerId + "/" + model.modelId
-                            ].message
-                          }{" "}
-                          ·{" "}
-                          {(
-                            chat.modelChecks[
-                              model.providerId + "/" + model.modelId
-                            ].latencyMs / 1000
-                          ).toFixed(1)}
-                          s ·{" "}
-                          {new Date(
-                            chat.modelChecks[
-                              model.providerId + "/" + model.modelId
-                            ].checkedAt,
-                          ).toLocaleTimeString()}
-                        </p>
-                      )}
-                  </div>
-                  {model.providerId !== "ollama" && (
-                    <button
-                      disabled={chat.busy}
-                      onClick={() =>
-                        void chat.checkModel(
-                          model.providerId as "gemini" | "nvidia",
-                          model.modelId,
-                        )
-                      }
-                    >
-                      {chat.modelScan?.running &&
-                      chat.modelScan.providerId === model.providerId &&
-                      chat.modelScan.model === model.modelId
-                        ? "Checking model…"
-                        : "Check model"}
-                    </button>
-                  )}
-                  <button
-                    disabled={chat.busy || model.active}
-                    onClick={() =>
-                      chat.saveSettings({
-                        providerId: model.providerId,
-                        modelId: model.modelId,
-                      })
-                    }
-                  >
-                    {model.active
-                      ? "Using"
-                      : model.location === "remote"
-                        ? "Use online"
-                        : "Use"}
-                  </button>
-                </article>
-              ))}
           </div>
+          {remote && (
+            <p className="ai-footnote">
+              Model checks use a small synthetic prompt and provider quota. A
+              passed check is a sample, not a reliability guarantee.
+            </p>
+          )}
         </section>
-      ))}
-      {draft && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            chat.saveSettings(draft);
-          }}
-        >
-          <h2>Generation</h2>
-          <div className="model-fields">
-            <label>
-              Context window
-              <input
-                type="number"
-                min={2048}
-                max={32768}
-                step={1}
-                value={draft.contextWindow}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    contextWindow: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <label>
-              Output limit
-              <input
-                type="number"
-                min={128}
-                max={8192}
-                value={draft.outputLimit}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    outputLimit: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <label>
-              Temperature
-              <input
-                type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                value={draft.temperature}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    temperature: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={draft.streaming}
-                onChange={(event) =>
-                  setDraft({ ...draft, streaming: event.target.checked })
-                }
-              />{" "}
-              Stream answers
-            </label>
-          </div>
-          <details>
-            <summary>Advanced</summary>
-            <div className="model-fields">
-              {!remote && (
+        {remote && (
+          <details className="ai-advanced">
+            <summary>Connection checks</summary>
+            <section aria-label="Model checks and starred models">
+              <p>
+                {
+                  Object.values(chat.modelChecks).filter(
+                    (check) => check.providerId === providerId && check.passed,
+                  ).length
+                }{" "}
+                passed /{" "}
+                {
+                  Object.values(chat.modelChecks).filter(
+                    (check) => check.providerId === providerId,
+                  ).length
+                }{" "}
+                checked
+              </p>
+              <p>
+                {chat.modelScan?.providerId === providerId
+                  ? chat.modelScan.note
+                  : "Check models using synthetic sources only. This uses provider quota."}
+              </p>
+              <button
+                disabled={chat.busy || !status?.configured}
+                onClick={() => void chat.recheckModels(providerId)}
+              >
+                Recheck all models
+              </button>
+              {chat.modelScan?.running && (
+                <button onClick={chat.stopModelChecks}>
+                  Stop provider checks
+                </button>
+              )}
+            </section>
+          </details>
+        )}
+        {providerId === "ollama" && (
+          <details className="ai-advanced">
+            <summary>Install a local model</summary>
+            <section aria-label="Local model downloads">
+              <div className="ai-download-form">
                 <label>
-                  Keep model loaded (seconds)
+                  Ollama model
                   <input
-                    type="number"
-                    min={0}
-                    max={3600}
-                    value={draft.keepAliveSeconds}
-                    onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        keepAliveSeconds: Number(event.target.value),
-                      })
-                    }
+                    value={downloadName}
+                    maxLength={200}
+                    onChange={(event) => setDownloadName(event.target.value)}
+                    disabled={pulling}
                   />
                 </label>
-              )}
-              {(
-                [
-                  ["loadTimeoutMs", "Model load timeout"],
-                  ["inactivityTimeoutMs", "Generation inactivity timeout"],
-                  ["absoluteTimeoutMs", "Absolute run timeout"],
-                ] as const
-              )
-                .filter(([key]) => !remote || key !== "loadTimeoutMs")
-                .map(([key, label]) => (
-                  <label key={key}>
-                    {label} (seconds)
+                <button
+                  disabled={chat.busy || pulling || !downloadName.trim()}
+                  onClick={() => void chat.downloadModel(downloadName.trim())}
+                >
+                  DOWNLOAD MODEL
+                </button>
+              </div>
+              {chat.pulls.map((pull) => (
+                <div
+                  className="ai-download-status"
+                  role="status"
+                  key={pull.model}
+                >
+                  <strong>
+                    {pull.model} ·{" "}
+                    {pull.phase === "model-pulling"
+                      ? "DOWNLOADING MODEL"
+                      : pull.phase === "model-installed"
+                        ? "MODEL INSTALLED"
+                        : pull.phase === "cancelled"
+                          ? "DOWNLOAD CANCELLED"
+                          : "DOWNLOAD FAILED"}
+                  </strong>
+                  <p>{pull.message}</p>
+                  {pull.progress?.total && (
+                    <p>
+                      Current layer: {(pull.progress.current / 1e9).toFixed(2)}{" "}
+                      GB / {(pull.progress.total / 1e9).toFixed(2)} GB ·{" "}
+                      {Math.floor(
+                        (pull.progress.current / pull.progress.total) * 100,
+                      )}
+                      %
+                    </p>
+                  )}
+                  {pull.phase === "model-pulling" && (
+                    <button onClick={() => chat.cancelPull(pull.model)}>
+                      CANCEL
+                    </button>
+                  )}
+                </div>
+              ))}
+            </section>
+          </details>
+        )}
+        {draft && (
+          <details className="ai-advanced">
+            <summary>Generation settings</summary>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void chat.saveSettings(draft);
+              }}
+            >
+              <p className="ai-subtle">
+                Applied to the active model:{" "}
+                {active?.modelId ?? "none selected"}.
+              </p>
+              <div className="model-fields">
+                {(
+                  [
+                    ["contextWindow", "Context window", 2048, 32768, 1],
+                    ["outputLimit", "Output limit", 128, 8192, 1],
+                    ["temperature", "Temperature", 0, 2, 0.1],
+                  ] as const
+                ).map(([field, label, min, max, step]) => (
+                  <label key={field}>
+                    {label}
                     <input
                       type="number"
-                      min={1}
-                      max={1800}
-                      value={draft[key] / 1000}
+                      min={min}
+                      max={max}
+                      step={step}
+                      value={draft[field]}
                       onChange={(event) =>
                         setDraft({
                           ...draft,
-                          [key]: Number(event.target.value) * 1000,
+                          [field]: Number(event.target.value),
                         })
                       }
                     />
                   </label>
                 ))}
-            </div>
+                <label className="ai-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={draft.streaming}
+                    onChange={(event) =>
+                      setDraft({ ...draft, streaming: event.target.checked })
+                    }
+                  />
+                  Stream answers
+                </label>
+              </div>
+              <details>
+                <summary>Timeouts and memory</summary>
+                <div className="model-fields">
+                  {draft.providerId === "ollama" && (
+                    <label>
+                      Keep model loaded (seconds)
+                      <input
+                        type="number"
+                        min={0}
+                        max={3600}
+                        value={draft.keepAliveSeconds}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            keepAliveSeconds: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  )}
+                  {(
+                    [
+                      ["loadTimeoutMs", "Model load timeout"],
+                      ["inactivityTimeoutMs", "Generation inactivity timeout"],
+                      ["absoluteTimeoutMs", "Absolute run timeout"],
+                    ] as const
+                  )
+                    .filter(
+                      ([field]) =>
+                        draft.providerId === "ollama" ||
+                        field !== "loadTimeoutMs",
+                    )
+                    .map(([field, label]) => (
+                      <label key={field}>
+                        {label} (seconds)
+                        <input
+                          type="number"
+                          min={1}
+                          max={1800}
+                          value={draft[field] / 1000}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              [field]: Number(event.target.value) * 1000,
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
+                </div>
+              </details>
+              <button disabled={chat.busy} className="ai-primary">
+                Save generation settings
+              </button>
+            </form>
           </details>
-          <button type="submit" disabled={chat.busy}>
-            Save generation settings
-          </button>
-        </form>
-      )}
-      {(chat.runtime.error || chat.registry?.error) && (
-        <p role="alert">
-          {chat.runtime.error ?? chat.registry?.error?.message}
-        </p>
-      )}
-      <details>
-        <summary>Latest run diagnostics</summary>
-        <pre>
-          {JSON.stringify(
-            chat.runtime.diagnostics ?? {
-              status: "No completed run this session",
-            },
-            null,
-            2,
-          )}
-        </pre>
-      </details>
-      <p>Additional providers remain planned for a later integration.</p>
+        )}
+        {chat.runtime.error && (
+          <p className="ai-inline-error" role="alert">
+            {chat.runtime.error}
+          </p>
+        )}
+        <footer className="ai-footer">
+          <p className="ai-privacy">
+            {active?.providerId === "ollama" ? "LOCAL: " : "ONLINE: "}
+            {active?.providerId === "ollama"
+              ? "Local inference through Ollama. Your source files stay on this device."
+              : active?.providerId === "openrouter"
+                ? "Your attached Context Box, question and included history are sent to OpenRouter and its model providers."
+                : `Your attached Context Box, question and included history are sent to ${activeProvider?.name ?? "your selected provider"}.`}
+          </p>
+          <details>
+            <summary>Latest run diagnostics</summary>
+            <pre>
+              {JSON.stringify(
+                chat.runtime.diagnostics ?? {
+                  status: "No completed run this session",
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </details>
+        </footer>
+      </div>
     </section>
   );
 }

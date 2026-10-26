@@ -214,6 +214,81 @@ class OllamaProvider {
     }
   }
 
+  async pull(model, signal, onProgress) {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    let timer;
+    const touch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(cancel, 120000);
+    };
+    if (signal.aborted) controller.abort();
+    signal.addEventListener("abort", cancel, { once: true });
+    const deadline = setTimeout(cancel, 2 * 60 * 60 * 1000);
+    let reader;
+    try {
+      touch();
+      const response = await this.fetch(this.baseUrl + "/api/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: validateModelName(model), stream: true }),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error("Pull unavailable");
+      reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      let buffer = "",
+        complete = false;
+      const consume = (line) => {
+        if (!line.trim()) return;
+        const event = JSON.parse(line);
+        if (event.error || typeof event.status !== "string")
+          throw new Error("Invalid pull event");
+        complete ||= event.status === "success";
+        const hasBytes =
+          Number.isSafeInteger(event.total) &&
+          event.total > 0 &&
+          Number.isSafeInteger(event.completed) &&
+          event.completed >= 0 &&
+          event.completed <= event.total;
+        onProgress({
+          message: event.status.slice(0, 240),
+          progress: hasBytes
+            ? {
+                current: event.completed,
+                total: event.total,
+                unit: "layer bytes",
+              }
+            : undefined,
+        });
+      };
+      while (!complete) {
+        const { value, done } = await reader.read();
+        touch();
+        buffer += done
+          ? decoder.decode()
+          : decoder.decode(value, { stream: true });
+        if (buffer.length > 65536) throw new Error("Pull event too large");
+        let newline;
+        while ((newline = buffer.indexOf("\n")) >= 0) {
+          consume(buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+        }
+        if (done) {
+          consume(buffer);
+          break;
+        }
+      }
+      if (!complete) throw new Error("Download ended before completion");
+    } finally {
+      clearTimeout(timer);
+      clearTimeout(deadline);
+      signal.removeEventListener("abort", cancel);
+      await reader?.cancel().catch(() => {});
+      reader?.releaseLock();
+    }
+  }
+
   async listModels() {
     const body = await this.request("/api/tags");
     if (!Array.isArray(body?.models))
@@ -280,6 +355,7 @@ class OllamaProvider {
     };
     const activity = () => {
       phase = "generation";
+      request.onGenerationStarted?.();
       arm(request.settings.inactivityTimeoutMs);
     };
     if (signal?.aborted) controller.abort();
