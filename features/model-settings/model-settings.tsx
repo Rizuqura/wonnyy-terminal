@@ -135,6 +135,14 @@ export function ModelSettings({
             Back to workspace <span aria-hidden="true">↗</span>
           </button>
         </header>
+        {chat.agent?.runtimeModel.modelId && (
+          <p className="ai-privacy">
+            {chat.agent.displayName} uses {chat.agent.runtimeModel.providerId} /{" "}
+            {chat.agent.runtimeModel.modelId} from Agent Construction. These are
+            shared defaults; choose Inherit shared Settings in its LLM node to
+            use them.
+          </p>
+        )}
         <section
           className="ai-connect-card settings-vault-card"
           aria-label="Knowledge vault"
@@ -703,8 +711,8 @@ export function ModelSettings({
             {active?.providerId === "ollama"
               ? "Local inference through Ollama. Your source files stay on this device."
               : active?.providerId === "openrouter"
-                ? "Your attached Context Box, question and included history are sent to OpenRouter and its model providers."
-                : `Your attached Context Box, question and included history are sent to ${activeProvider?.name ?? "your selected provider"}.`}
+                ? "Your attached Context Box, configured agent references, question and included history are sent to OpenRouter and its model providers."
+                : `Your attached Context Box, configured agent references, question and included history are sent to ${activeProvider?.name ?? "your selected provider"}.`}
           </p>
           <details>
             <summary>Latest run diagnostics</summary>

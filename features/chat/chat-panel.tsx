@@ -11,6 +11,9 @@ import {
 } from "./panel-geometry";
 import { ConversationHistory } from "./conversation-history";
 import { AgentAvatar } from "../agent/agent-avatar";
+import { ChatMarkdown } from "./chat-markdown";
+import { bannerStyle, wallpaperStyle } from "./chat-presentation";
+import { KnowledgeProposal } from "../agent/knowledge-proposal";
 
 export type { ChatMessage } from "../../types/ai";
 export type ChatPanelProps = {
@@ -41,6 +44,8 @@ export function ChatPanel({
   const isFloating = variant === "floating";
   const agentName = chat.agent?.displayName ?? "Wonnyy Agent";
   const [closed, setClosed] = useState(false);
+  const [knowledgeRunId, setKnowledgeRunId] = useState<string | null>(null);
+  useEffect(() => setKnowledgeRunId(null), [chat.conversation?.id]);
   const [isMinimized, setIsMinimized] = useState(false);
   useEffect(() => {
     if (minimizeForCanvas) setIsMinimized(true);
@@ -361,6 +366,7 @@ export function ChatPanel({
     >
       <div
         className="chat-header"
+        style={bannerStyle(chat.agent?.appearance?.bannerUrl)}
         onPointerDown={startDrag}
         onPointerMove={drag}
         onPointerUp={stopDrag}
@@ -370,14 +376,16 @@ export function ChatPanel({
         <span className="agent-drag-title">
           {agentName}
           <span className="agent-chat-subtitle">
-            Strict Context Analysis ·{" "}
+            {chat.agent?.description || "Strict Context Analysis"} ·{" "}
             {chat.runtime.state === "CONTEXT_TOO_LARGE"
               ? "Over Budget"
               : chat.unavailableReason
                 ? "Missing Sources"
-                : (chat.contextBoxes.find(
+                : (chat.conversation?.contextFile?.relativePath ??
+                  chat.contextBoxes.find(
                     (box) => box.id === chat.conversation?.contextBoxId,
-                  )?.name ?? "No Context")}
+                  )?.name ??
+                  "No Context")}
           </span>
         </span>
         <span className="chat-runtime-status" role="status">
@@ -473,14 +481,14 @@ export function ChatPanel({
       <details className="chat-context">
         <summary>Model and attached source details</summary>
         <span>
-          {chat.registry?.settings.providerId !== "ollama" && !!chat.registry
-            ? `ONLINE · ${chat.registry?.settings.providerId === "openrouter" ? "OpenRouter" : chat.registry?.settings.providerId === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
+          {chat.effectiveSettings?.providerId !== "ollama" && !!chat.registry
+            ? `ONLINE · ${chat.effectiveSettings?.providerId === "openrouter" ? "OpenRouter" : chat.effectiveSettings?.providerId === "nvidia" ? "NVIDIA NIM" : "Gemini"}`
             : "LOCAL · Ollama"}{" "}
-          · {chat.registry?.settings.modelId ?? "Choose a model in Settings"}
+          · {chat.effectiveSettings?.modelId ?? "Choose a model in Settings"}
         </span>
         <p className="chat-privacy">
-          {chat.registry?.settings.providerId !== "ollama" && !!chat.registry
-            ? `Approved source, your question, and included conversation history are sent to ${chat.registry?.settings.providerId === "openrouter" ? "OpenRouter and its model providers" : chat.registry?.settings.providerId === "nvidia" ? "NVIDIA" : "Google Gemini"}.`
+          {chat.effectiveSettings?.providerId !== "ollama" && !!chat.registry
+            ? `Approved sources, configured agent references, your question, and included conversation history are sent to ${chat.effectiveSettings?.providerId === "openrouter" ? "OpenRouter and its model providers" : chat.effectiveSettings?.providerId === "nvidia" ? "NVIDIA" : "Google Gemini"}.`
             : "Inference runs on this device."}
         </p>
         <p className="chat-memory">
@@ -507,12 +515,16 @@ export function ChatPanel({
             <button
               disabled={chat.busy}
               onClick={() => {
-                if (chat.conversation?.contextBoxId) chat.resume();
+                if (
+                  chat.conversation?.contextBoxId ||
+                  chat.conversation?.contextFile
+                )
+                  chat.resume();
                 else chat.newChat();
                 focusComposer();
               }}
             >
-              {chat.conversation.contextBoxId
+              {chat.conversation.contextBoxId || chat.conversation.contextFile
                 ? "Recheck attached sources"
                 : "Create bound chat"}
             </button>
@@ -521,13 +533,13 @@ export function ChatPanel({
         {chat.unavailableReason && <p>{chat.unavailableReason}</p>}
       </details>
       <div className="agent-provider-indicator">
-        {chat.registry?.settings.providerId === "ollama"
+        {chat.effectiveSettings?.providerId === "ollama"
           ? "LOCAL / Ollama"
           : chat.registry
             ? "ONLINE / " +
-              (chat.registry.settings.providerId === "openrouter"
+              (chat.effectiveSettings!.providerId === "openrouter"
                 ? "OpenRouter"
-                : chat.registry.settings.providerId === "nvidia"
+                : chat.effectiveSettings!.providerId === "nvidia"
                   ? "NVIDIA"
                   : "Gemini")
             : "Checking provider"}{" "}
@@ -560,6 +572,8 @@ export function ChatPanel({
       )}
       <div
         className="chat-thread"
+        style={wallpaperStyle(chat.agent?.appearance)}
+        data-wallpaper={chat.agent?.appearance?.wallpaperMode ?? "none"}
         ref={threadRef}
         aria-live="polite"
         onScroll={() => {
@@ -604,23 +618,23 @@ export function ChatPanel({
                 })}
               </time>
             </div>
-            <p>
-              {message.role === "assistant"
-                ? message.content
-                    .split(
-                      /(\n\n(?:Recomputed earlier analysis\. )?Source: "[^\n]+"; \d+\/\d+ rows matched;[\s\S]*$)/,
-                    )
-                    .map((part, index) =>
-                      index === 1 ? (
-                        <span className="chat-source-evidence" key={index}>
-                          {part}
-                        </span>
-                      ) : (
-                        part
-                      ),
-                    )
-                : message.content}
-            </p>
+            {message.role === "assistant" ? (
+              message.content
+                .split(
+                  /(\n\n(?:Recomputed earlier analysis\. )?Source: "[^\n]+"; \d+\/\d+ rows matched;[\s\S]*$)/,
+                )
+                .map((part, index) =>
+                  index === 1 ? (
+                    <div className="chat-source-evidence" key={index}>
+                      <ChatMarkdown content={part} />
+                    </div>
+                  ) : (
+                    <ChatMarkdown key={index} content={part} />
+                  ),
+                )
+            ) : (
+              <p>{message.content}</p>
+            )}
             {attempt &&
               ["failed", "cancelled", "interrupted"].includes(
                 attempt.status,
@@ -635,13 +649,25 @@ export function ChatPanel({
               )}
             {message.contextBox && (
               <small className="chat-context-provenance">
-                Context: {message.contextBox.name} / revision{" "}
-                {message.contextBox.revision}
+                Context: {message.contextBox.name}
+                {message.knowledgeBox
+                  ? ` + ${message.knowledgeBox.name}`
+                  : ""}{" "}
+                / revision {message.contextBox.revision}
               </small>
             )}
+            {message.contextFile && (
+              <small className="chat-context-provenance">
+                Context file: {message.contextFile.relativePath}
+                {message.knowledgeBox ? ` + ${message.knowledgeBox.name}` : ""}
+              </small>
+            )}
+
             {message.sources?.length ? (
               <div className="chat-sources">
-                <span>SOURCES USED · {message.sources.length}</span>
+                <span>
+                  {"SOURCES USED"} · {message.sources.length}
+                </span>
                 {message.sources.map((source) => (
                   <button
                     key={source.sourceId}
@@ -658,6 +684,17 @@ export function ChatPanel({
                 RUN {message.runId.slice(0, 8)} · {message.model}
               </span>
             )}
+            {message.role === "assistant" &&
+              message.runId &&
+              chat.conversation?.agentId === "wonnyy-agent" &&
+              chat.agent?.skills.includes("knowledge-consolidation") && (
+                <button
+                  disabled={chat.busy}
+                  onClick={() => setKnowledgeRunId(message.runId!)}
+                >
+                  Create knowledge proposal
+                </button>
+              )}
           </article>
         ))}
         {chat.runtime.requestId && (
@@ -702,17 +739,17 @@ export function ChatPanel({
         </div>
       )}
       {chat.runtime.state === "MODEL_MISSING" &&
-        chat.registry?.settings.providerId === "ollama" && (
+        chat.effectiveSettings?.providerId === "ollama" && (
           <div className="chat-notice">
             <button
               disabled={!!pulling || chat.busy}
               onClick={() =>
                 void chat.downloadModel(
-                  chat.registry?.settings.modelId ?? "qwen3:4b",
+                  chat.effectiveSettings?.modelId ?? "qwen3:4b",
                 )
               }
             >
-              DOWNLOAD MODEL · {chat.registry?.settings.modelId ?? "qwen3:4b"}
+              DOWNLOAD MODEL · {chat.effectiveSettings?.modelId ?? "qwen3:4b"}
             </button>
           </div>
         )}
@@ -848,6 +885,14 @@ export function ChatPanel({
             />
           ),
         )}
+      {knowledgeRunId && (
+        <KnowledgeProposal
+          key={knowledgeRunId}
+          chat={chat}
+          runId={knowledgeRunId}
+          onClose={() => setKnowledgeRunId(null)}
+        />
+      )}
     </aside>
   );
 }

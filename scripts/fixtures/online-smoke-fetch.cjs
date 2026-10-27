@@ -297,7 +297,9 @@ function createOnlineSmokeFetch() {
         done_reason: "stop",
         message: {
           content: JSON.stringify(
-            datasetPlan(body) ?? { answer: "ALPHA allocation is 25%." },
+            datasetPlan(body) ?? {
+              answer: state.localAnswer ?? "ALPHA allocation is 25%.",
+            },
           ),
         },
       }) + "\n",

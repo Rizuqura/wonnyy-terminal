@@ -33,7 +33,13 @@
     "test:ui-polish:electron": "npm run build && node scripts/electron-ui-polish-smoke.cjs",
     "test:surfaces:electron": "npm run build && node scripts/electron-soft-surfaces-smoke.cjs",
     "test:chronoz:electron": "npm run build && node scripts/electron-chronoz-smoke.cjs",
-    "test:startup:electron": "npm run build && node scripts/electron-startup-smoke.cjs"
+    "test:startup:electron": "npm run build && node scripts/electron-startup-smoke.cjs",
+    "test:knowledge:electron": "npm run build && node scripts/electron-knowledge-smoke.cjs",
+    "test:construction:electron": "npm run build && node scripts/electron-construction-smoke.cjs",
+    "test:appearance:electron": "npm run build && node scripts/electron-appearance-smoke.cjs",
+    "test:box-agents:electron": "npm run build && node scripts/electron-box-agents-smoke.cjs",
+    "test:add-agent:electron": "npm run build && node scripts/electron-add-agent-smoke.cjs",
+    "test:single-file:electron": "npm run build && node scripts/electron-single-file-smoke.cjs"
   },
   "dependencies": {
     "next": "^16.0.0",

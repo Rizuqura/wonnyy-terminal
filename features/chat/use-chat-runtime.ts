@@ -4,6 +4,9 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type {
   AiBridge,
   AgentConfig,
+  AgentConstructionConfig,
+  ConstructionFileBinding,
+  AgentAppearanceOptions,
   ModelRuntimeErrorValue,
   ContextBox,
   ContextBoxEdit,
@@ -66,6 +69,7 @@ export function useChatRuntime({
   const agentRef = useRef("wonnyy-agent");
   const agentDrafts = useRef(new Map<string, string>());
   const [connected, setConnected] = useState(false);
+  const [canonicalVault, setCanonicalVault] = useState<string | null>(null);
   const [startup, setStartup] = useState({
     vaultPath,
     progress: 0,
@@ -118,6 +122,7 @@ export function useChatRuntime({
       error: null,
     });
     setConnected(false);
+    setCanonicalVault(null);
     setConversation(null);
     setContextBoxes([]);
     setPreselectedBoxId("");
@@ -208,10 +213,18 @@ export function useChatRuntime({
         try {
           savedId = localStorage.getItem("qterminal-active-chat:" + vaultPath);
         } catch {}
-        const profiles = await Promise.all([
-          client.getAgent("wonnyy-agent"),
-          client.getAgent("chronoz"),
-        ]);
+        const resolvedVault =
+          vaultPath && client.getVaultIdentity
+            ? (await client.getVaultIdentity()).vaultPath
+            : vaultPath;
+        if (session.current !== version) return;
+        setCanonicalVault(resolvedVault);
+        const profiles = client.listAgents
+          ? await client.listAgents()
+          : await Promise.all([
+              client.getAgent("wonnyy-agent"),
+              client.getAgent("chronoz"),
+            ]);
         if (session.current !== version) return;
         setStartup({
           vaultPath,
@@ -304,7 +317,7 @@ export function useChatRuntime({
       }
     } catch {}
     if (!conversation) return;
-    if (!conversation.contextBoxId) {
+    if (!conversation.contextBoxId && !conversation.contextFile) {
       setContextError(
         "Legacy chat is read-only. Create a bound chat with a Context Box.",
       );
@@ -313,12 +326,12 @@ export function useChatRuntime({
     void bridge.current
       .checkConversation(conversation.id)
       .then(async (identity) => {
-        const box = await bridge.current!.inspectContextBox(
-          conversation.contextBoxId!,
-        );
+        const box = conversation.contextBoxId
+          ? await bridge.current!.inspectContextBox(conversation.contextBoxId)
+          : null;
         if (!stale) {
           if (
-            box.items.length &&
+            box?.items.length &&
             box.items.every(
               (item) => item.status === "ready" && item.estimatedTokens === 0,
             )
@@ -360,6 +373,7 @@ export function useChatRuntime({
   const operate = useCallback(
     async (
       operation: (client: AiBridge, current: () => boolean) => Promise<void>,
+      reportError = true,
     ) => {
       await interruptChecks();
       if (!bridge.current || mutation.current || request.current) return;
@@ -374,6 +388,7 @@ export function useChatRuntime({
         await operation(bridge.current, () => version === session.current);
         return true;
       } catch (error) {
+        if (!reportError) throw error;
         if (version === session.current) fail(error);
         return false;
       } finally {
@@ -390,7 +405,9 @@ export function useChatRuntime({
       eventError.current?.requestId === id ? eventError.current.error : null,
     [],
   );
-  const attached = Boolean(context && conversation?.contextBoxId);
+  const attached = Boolean(
+    context && (conversation?.contextBoxId || conversation?.contextFile),
+  );
   const run = useCallback(
     async (text: string, retryOf?: string) => {
       await interruptChecks();
@@ -532,12 +549,18 @@ export function useChatRuntime({
       if (current()) setContextBoxes(reviewed);
     });
   };
-  const createChat = (contextBoxId: string, creationId: string) =>
+  const createChat = (
+    contextBoxId: string,
+    creationId: string,
+    includeAgentKnowledge = false,
+    contextFile?: ConstructionFileBinding,
+  ) =>
     operate(async (client, current) => {
       const value = await client.createConversation({
         agentId: agentRef.current,
-        contextBoxId,
+        ...(contextFile ? { contextFile } : { contextBoxId }),
         creationId,
+        ...(includeAgentKnowledge ? { includeAgentKnowledge } : {}),
       });
       if (!current()) return;
       setContext(value.contextIdentity);
@@ -928,20 +951,186 @@ export function useChatRuntime({
     );
   }, [connected, working, runtime.state, registry]);
 
+  const effectiveSettings = registry
+    ? {
+        ...registry.settings,
+        ...(agent?.runtimeModel?.providerId && agent.runtimeModel.modelId
+          ? {
+              providerId: agent.runtimeModel.providerId,
+              modelId: agent.runtimeModel.modelId,
+            }
+          : {}),
+      }
+    : null;
+  const effectiveOnline =
+    registry?.providers.find(
+      (provider) => provider.id === effectiveSettings?.providerId,
+    )?.online ?? registry?.online;
   const selectedModelAvailable = registry?.models.some(
     (model) =>
-      model.providerId === registry.settings.providerId &&
-      model.modelId === registry.settings.modelId,
+      model.providerId === effectiveSettings?.providerId &&
+      model.modelId === effectiveSettings?.modelId,
   );
   const status =
-    runtime.state === "READY" && !registry?.online
+    runtime.state === "READY" && !effectiveOnline
       ? "MODEL_OFFLINE"
       : runtime.state === "READY" && !selectedModelAvailable
         ? "MODEL_MISSING"
         : runtime.state;
 
   return {
+    createAgent: (name: string, creationId: string) =>
+      operate(async (client, current) => {
+        if (!client.createAgent)
+          throw new Error("Restart QTerminal to add agents.");
+        const profile = await client.createAgent({ name, creationId });
+        if (!current()) return;
+        agentDrafts.current.set(agentRef.current, draft);
+        setAgents((profiles) => [
+          ...profiles.filter((item) => item.id !== profile.id),
+          profile,
+        ]);
+        setAgent(profile);
+        agentRef.current = profile.id;
+        setActiveAgentId(profile.id);
+        setConversation(null);
+        setCreatingChat(false);
+        setPreselectedBoxId("");
+        setContext(null);
+        setContextError(null);
+        setDraft("");
+        dispatch({ type: "reset", state: "READY" });
+      }, false),
+    researchDefaults: (() => {
+      const sameVault = (path: string) =>
+        window.wonnyyDesktop?.platform === "win32"
+          ? path.toLowerCase() === canonicalVault?.toLowerCase()
+          : path === canonicalVault;
+      const nodes = agent?.construction?.active?.nodes ?? [];
+      const contextNode = nodes.find((node) => node.kind === "Context");
+      const context = contextNode?.config.contextBox;
+      const contextFile = contextNode?.config.contextFile;
+      const knowledgeNode = nodes.find((node) => node.kind === "Knowledge");
+      const knowledge =
+        knowledgeNode?.config.contextFile ?? knowledgeNode?.config.contextBox;
+      return {
+        contextBoxId:
+          context && sameVault(context.vaultPath) ? context.boxId : undefined,
+        contextFile:
+          contextFile && sameVault(contextFile.vaultPath)
+            ? contextFile
+            : undefined,
+        knowledge:
+          knowledge && sameVault(knowledge.vaultPath) ? knowledge : undefined,
+      };
+    })(),
+    previewConstructionBox: async (boxId: string) => {
+      if (!bridge.current?.previewConstructionBox)
+        throw new Error(
+          "Restart QTerminal to use Context Boxes in agent construction.",
+        );
+      await interruptChecks();
+      return bridge.current.previewConstructionBox({ boxId });
+    },
+    listConstructionFiles: async () => {
+      if (!bridge.current?.listConstructionFiles)
+        throw new Error("Restart QTerminal to select node files.");
+      await interruptChecks();
+      return bridge.current.listConstructionFiles();
+    },
+    previewConstructionFile: async (relativePath: string) => {
+      if (!bridge.current?.previewConstructionFile)
+        throw new Error("Restart QTerminal to review node files.");
+      await interruptChecks();
+      return bridge.current.previewConstructionFile({ relativePath });
+    },
+    effectiveSettings,
+    saveConstruction: async (
+      action: "draft" | "apply",
+      config: AgentConstructionConfig,
+      expectedRevision: number,
+      avatarDataUrl?: string | null,
+      presentation?: {
+        appearance: AgentAppearanceOptions;
+        bannerDataUrl?: string | null;
+        wallpaperDataUrl?: string | null;
+      },
+    ) => {
+      if (!bridge.current?.saveAgentConstruction)
+        throw new Error("Restart QTerminal to load Agent Construction.");
+      const owner = agentRef.current;
+      const version = session.current;
+      await interruptChecks();
+      if (agentRef.current !== owner)
+        throw new Error(
+          "Agent changed before saving. Reopen its construction settings.",
+        );
+      const value = await bridge.current.saveAgentConstruction({
+        id: owner,
+        action,
+        config,
+        expectedRevision,
+        ...(avatarDataUrl !== undefined ? { avatarDataUrl } : {}),
+        ...presentation,
+      });
+      if (agentRef.current === owner) setAgent(value);
+      setAgents((profiles) =>
+        profiles.map((profile) => (profile.id === value.id ? value : profile)),
+      );
+      const chatId = selected.current?.id;
+      if (
+        action === "apply" &&
+        chatId &&
+        agentRef.current === owner &&
+        session.current === version
+      ) {
+        try {
+          const identity = await bridge.current.checkConversation(chatId);
+          if (
+            selected.current?.id === chatId &&
+            agentRef.current === owner &&
+            session.current === version
+          ) {
+            setContext(identity);
+            setContextError(null);
+            dispatch({ type: "reset", state: "READY" });
+          }
+        } catch (error) {
+          if (
+            selected.current?.id === chatId &&
+            agentRef.current === owner &&
+            session.current === version
+          ) {
+            setContext(null);
+            setContextError(chatErrorMessage(error));
+          }
+        }
+      }
+      return value;
+    },
     startup,
+    proposeKnowledge: async (runId: string, extraction: unknown) => {
+      if (!bridge.current?.proposeKnowledge)
+        throw new Error(
+          "Restart QTerminal to load knowledge proposal support.",
+        );
+      return bridge.current.proposeKnowledge({ runId, extraction });
+    },
+    retrieveKnowledge: async (query: {
+      entity: string;
+      topic: string;
+      period: string;
+      maxTokens: number;
+    }) => {
+      if (!bridge.current?.retrieveKnowledge || !selected.current)
+        throw new Error(
+          "Select a bound Wonnyy chat and restart QTerminal if it was updated.",
+        );
+      return bridge.current.retrieveKnowledge({
+        conversationId: selected.current.id,
+        query,
+      });
+    },
     pulls,
     downloadModel: async (model: string) => {
       try {
@@ -968,6 +1157,13 @@ export function useChatRuntime({
       if (!bridge.current)
         throw new Error("Desktop connection is unavailable.");
       return bridge.current.chooseAgentAvatar();
+    },
+    chooseAgentBackdrop: async (kind: "banner" | "wallpaper") => {
+      if (!bridge.current?.chooseAgentBackdrop)
+        throw new Error(
+          "Restart QTerminal to load banner and wallpaper settings.",
+        );
+      return bridge.current.chooseAgentBackdrop(kind);
     },
     saveAgent: async (
       customInstructions: string,
@@ -1022,7 +1218,7 @@ export function useChatRuntime({
       attached &&
       !contextError &&
       !!selectedModelAvailable &&
-      !!registry?.online,
+      !!effectiveOnline,
     submit: () => void run(draft),
     retry,
     stop,

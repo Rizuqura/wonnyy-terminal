@@ -118,6 +118,70 @@ class ChatService {
   async listBoxes(vault) {
     return (await this.store(vault)).boxes.list();
   }
+  async previewConstructionBox(vault, input) {
+    assertFields(input, ["boxId"]);
+    validId(input.boxId);
+    return require("./construction-context.cjs").readBox(
+      this,
+      vault,
+      input.boxId,
+    );
+  }
+  async listConstructionFiles(vault) {
+    const snapshot = await require("../vault-service.cjs").scanVault(
+      (await this.store(vault)).root,
+    );
+    if (snapshot.status !== "ready")
+      throw new ModelRuntimeError(
+        "MODEL_CONTEXT_INVALID",
+        snapshot.message ?? "The vault is unavailable.",
+      );
+    const files = [];
+    const visit = (entries) => {
+      for (const entry of entries) {
+        if (entry.kind === "file") files.push(entry.relativePath);
+        else visit(entry.children ?? []);
+      }
+    };
+    visit(snapshot.entries);
+    return files.sort();
+  }
+  async previewConstructionFile(vault, input) {
+    assertFields(input, ["relativePath"]);
+    if (
+      typeof input.relativePath !== "string" ||
+      !input.relativePath ||
+      input.relativePath.length > 128
+    )
+      throw new ModelRuntimeError(
+        "MODEL_INVALID_REQUEST",
+        "Choose a supported vault file with a path of at most 128 characters.",
+      );
+    return require("./construction-context.cjs").readFile(
+      this,
+      vault,
+      input.relativePath,
+    );
+  }
+  async saveConstruction(vault, input) {
+    return this.exclusive(async () => {
+      if (input?.action === "apply") {
+        const { config } =
+          require("./agent-construction.cjs").validateConstruction(
+            input.config,
+            input.id,
+            true,
+          );
+        await require("./construction-context.cjs").constructionReferences(
+          this,
+          vault,
+          config,
+          true,
+        );
+      }
+      return this.agents.saveConstruction(input);
+    });
+  }
   async saveBox(vault, input) {
     assertFields(input, ["name"]);
     return this.exclusive(async () => {
@@ -212,6 +276,9 @@ class ChatService {
         value.contextBoxId = box.id;
         value.contextBoxRevision = box.revision;
         value.contextIdentity = identity;
+        delete value.agentKnowledge;
+        delete value.contextFile;
+        value.schemaVersion = 3;
         value.contextTransitions ??= [];
         value.contextTransitions.push({
           contextBoxId: box.id,
@@ -223,7 +290,7 @@ class ChatService {
     });
   }
   upgradeConversation(value) {
-    if (value.schemaVersion === 3) return;
+    if (value.schemaVersion >= 3) return;
     for (const message of value.messages)
       if (message.role === "assistant")
         message.contextIdentity = value.contextIdentity;
@@ -233,25 +300,60 @@ class ChatService {
     value.creationId ??= randomUUID();
   }
   async boundScope(root, conversation, scope, pinned = false) {
-    if (!conversation.contextBoxId)
+    if (!conversation.contextBoxId && !conversation.contextFile)
       throw new ModelRuntimeError(
         "MODEL_CONTEXT_INVALID",
         "Legacy chat is read-only. Create a bound chat with a Context Box.",
       );
-    const box = await (
-      await this.store(root)
-    ).boxes.get(conversation.contextBoxId);
-    return this.knowledge.prepareBrainScope(
+    const box = conversation.contextFile
+      ? null
+      : await (await this.store(root)).boxes.get(conversation.contextBoxId);
+    const { readBinding } = require("./construction-context.cjs");
+    if (conversation.contextFile && !pinned)
+      await readBinding(this, root, conversation.contextFile);
+    const knowledge = conversation.agentKnowledge;
+    if (knowledge && !pinned) await readBinding(this, root, knowledge);
+    const paths = [
+      ...new Set([
+        ...(box
+          ? box.items.map((item) => item.relativePath)
+          : conversation.contextFile.contextIdentity.sources.map(
+              (source) => source.relativePath,
+            )),
+        ...(knowledge?.contextIdentity.sources.map(
+          (source) => source.relativePath,
+        ) ?? []),
+      ]),
+    ];
+    const prepared = await this.knowledge.prepareBrainScope(
       root,
       { ...scope, activeStationIds: [], matchMode: "any" },
       pinned
         ? conversation.contextIdentity.sources
-        : box.items.map((item) => ({
-            sourceId: item.relativePath,
-            relativePath: item.relativePath,
+        : paths.map((relativePath) => ({
+            sourceId: relativePath,
+            relativePath,
           })),
       !pinned,
     );
+    if (
+      [conversation.contextFile, knowledge]
+        .filter(Boolean)
+        .flatMap((binding) => binding.contextIdentity.sources)
+        .some(
+          (expected) =>
+            !prepared.sources.some(
+              (source) =>
+                source.id === expected.sourceId &&
+                source.contentHash === expected.contentHash,
+            ),
+        )
+    )
+      throw new ModelRuntimeError(
+        "MODEL_CONTEXT_INVALID",
+        "A reviewed research file or agent Knowledge source changed. Review it in agent settings and explicitly create a new chat.",
+      );
+    return prepared;
   }
   async checkConversation(vault, id) {
     const { root, store } = await this.store(vault);
@@ -264,14 +366,42 @@ class ChatService {
   async create(vault, input) {
     return this.exclusive(async () => {
       const { root, store } = await this.store(vault);
-      assertFields(input, ["contextBoxId", "creationId", "agentId"]);
+      assertFields(input, [
+        "contextBoxId",
+        "contextFile",
+        "creationId",
+        "agentId",
+        "includeAgentKnowledge",
+      ]);
+      if (Boolean(input.contextBoxId) === Boolean(input.contextFile))
+        throw new ModelRuntimeError(
+          "MODEL_INVALID_REQUEST",
+          "Choose a Context Box or a reviewed single file for this chat.",
+        );
+      if (input.contextFile)
+        require("./schemas.cjs").parse(
+          require("./agent-construction.cjs").contextFileBindingSchema,
+          input.contextFile,
+        );
+      if (
+        input.includeAgentKnowledge !== undefined &&
+        typeof input.includeAgentKnowledge !== "boolean"
+      )
+        throw new ModelRuntimeError(
+          "MODEL_INVALID_REQUEST",
+          "Invalid knowledge selection.",
+        );
       const agentId = input.agentId ?? "wonnyy-agent";
       if (
         typeof agentId !== "string" ||
-        !Object.hasOwn(require("./agent-policy.cjs").AGENT_DEFINITIONS, agentId)
+        (!this.agents &&
+          !Object.hasOwn(
+            require("./agent-policy.cjs").AGENT_DEFINITIONS,
+            agentId,
+          ))
       )
         throw new ModelRuntimeError("MODEL_INVALID_REQUEST", "Unknown agent.");
-      if (this.agents) await this.agents.get(agentId);
+      const agent = this.agents ? await this.agents.get(agentId) : null;
       validId(input.creationId);
       const existing = (await store.list()).find(
         (c) => c.creationId === input.creationId,
@@ -279,7 +409,11 @@ class ChatService {
       if (existing) {
         if (
           existing.contextBoxId !== input.contextBoxId ||
-          existing.agentId !== agentId
+          existing.contextFile?.contextIdentity.id !==
+            input.contextFile?.contextIdentity?.id ||
+          existing.agentId !== agentId ||
+          Boolean(existing.agentKnowledge) !==
+            Boolean(input.includeAgentKnowledge)
         )
           throw new ModelRuntimeError(
             "MODEL_INVALID_REQUEST",
@@ -287,18 +421,50 @@ class ChatService {
           );
         return existing;
       }
-      const box = await (await this.store(root)).boxes.get(input.contextBoxId);
+      const { readBinding } = require("./construction-context.cjs");
+      const contextFile = input.contextFile
+        ? (await readBinding(this, root, input.contextFile)).binding
+        : null;
+      const box = contextFile
+        ? null
+        : await (await this.store(root)).boxes.get(input.contextBoxId);
+      let agentKnowledge = null;
+      if (input.includeAgentKnowledge) {
+        const knowledgeNode = agent?.construction?.active?.nodes.find(
+          (node) => node.kind === "Knowledge",
+        );
+        const binding =
+          knowledgeNode?.config.contextFile ?? knowledgeNode?.config.contextBox;
+        if (!binding)
+          throw new ModelRuntimeError(
+            "MODEL_CONTEXT_INVALID",
+            "This agent has no reviewed Knowledge box. Reopen its settings.",
+          );
+        agentKnowledge = (await readBinding(this, root, binding)).binding;
+      }
       const candidate = {
-        contextBoxId: box.id,
-        contextBoxRevision: box.revision,
-        contextIdentity: box.contextIdentity,
+        ...(box
+          ? {
+              contextBoxId: box.id,
+              contextBoxRevision: box.revision,
+              contextIdentity: box.contextIdentity,
+            }
+          : { contextFile }),
+        ...(agentKnowledge ? { agentKnowledge } : {}),
       };
       const identity = contextIdentity(
         await this.boundScope(root, candidate, {
           ownerId: "create:" + randomUUID(),
         }),
       );
-      return store.create(identity, box, input.creationId, agentId);
+      return store.create(
+        identity,
+        box,
+        input.creationId,
+        agentId,
+        agentKnowledge,
+        contextFile,
+      );
     });
   }
   async rename(vault, input) {
@@ -356,6 +522,11 @@ class ChatService {
     validId(input.requestId);
     validId(input.conversationId);
     const question = validateUserMessage(input.userMessage);
+    if (/^\/loop(?:\s|$)/i.test(question))
+      throw new ModelRuntimeError(
+        "MODEL_INVALID_REQUEST",
+        "This repository has no /loop extraction workflow. Use a normal research question, then Create knowledge proposal on a completed Wonnyy answer. No loop was executed.",
+      );
     this.assertIdle();
     let finish;
     const active = {
@@ -411,6 +582,13 @@ class ChatService {
               : await readModelRun(root, previous.runId),
         };
       }
+      if (agentConfig?.construction?.active)
+        agentConfig.configurationReferences =
+          await require("./construction-context.cjs").constructionReferences(
+            this,
+            root,
+            agentConfig.construction.active,
+          );
       let identity;
       try {
         identity = contextIdentity(
@@ -433,10 +611,19 @@ class ChatService {
           "MODEL_CONTEXT_INVALID",
           "This chat's binding changed while the request was prepared. Recheck the attached box before sending.",
         );
-      const boxForTurn = await (
-        await this.store(root)
-      ).boxes.get(conversation.contextBoxId);
-      const settings = await this.registry.read();
+      const boxForTurn = conversation.contextFile
+        ? null
+        : await (await this.store(root)).boxes.get(conversation.contextBoxId);
+      const sharedSettings = await this.registry.read();
+      const settings =
+        agentConfig?.runtimeModel?.providerId &&
+        agentConfig.runtimeModel.modelId
+          ? {
+              ...sharedSettings,
+              providerId: agentConfig.runtimeModel.providerId,
+              modelId: agentConfig.runtimeModel.modelId,
+            }
+          : sharedSettings;
       active.controller.signal.throwIfAborted();
       timer = setTimeout(
         () =>
@@ -450,7 +637,9 @@ class ChatService {
       );
       emit({
         state: "MODEL_CHECKING",
-        status: { message: "Checking selected model availability." },
+        status: {
+          message: "Checking selected model availability.",
+        },
       });
       await this.registry.validateSelection(settings, {
         signal: active.controller.signal,
@@ -461,8 +650,12 @@ class ChatService {
           message.role === "assistant" &&
           (message.contextIdentity ?? conversation.contextIdentity).id ===
             identity.id &&
-          (!message.contextBox ||
-            message.contextBox.id === conversation.contextBoxId),
+          (conversation.contextFile
+            ? message.contextFile?.relativePath ===
+              conversation.contextFile.relativePath
+            : !message.contextFile &&
+              (!message.contextBox ||
+                message.contextBox.id === conversation.contextBoxId)),
       )) {
         const user = conversation.messages.find(
           (message) => message.id === answer.userMessageId,
@@ -518,7 +711,7 @@ class ChatService {
       conversation = await store.update(conversation.id, (value) => {
         this.upgradeConversation(value);
         value.contextIdentity = identity;
-        value.contextBoxRevision = boxForTurn.revision;
+        if (boxForTurn) value.contextBoxRevision = boxForTurn.revision;
         if (!input.retryOf)
           value.messages.push({
             id: userMessageId,
@@ -571,6 +764,8 @@ class ChatService {
           contextChanged,
           datasetHistory,
           contextBox: boxForTurn,
+          contextFile: conversation.contextFile,
+          agentKnowledge: conversation.agentKnowledge,
           agentConfig,
           earlierExchangesDropped: Math.max(0, history.length / 2 - 12),
           settings,

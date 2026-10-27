@@ -62,8 +62,21 @@ contextBridge.exposeInMainWorld("wonnyyDesktop", {
       return () => ipcRenderer.removeListener("ai:usageChanged", listener);
     },
     getAgent: (id) => invokeModel("ai:getAgent", id),
+    listAgents: () => invokeModel("ai:listAgents"),
+    createAgent: (input) => invokeModel("ai:createAgent", input),
+    getVaultIdentity: () => invokeModel("ai:getVaultIdentity"),
+    saveAgentConstruction: (input) =>
+      invokeModel("ai:saveAgentConstruction", input),
+    previewConstructionBox: (input) =>
+      invokeModel("ai:previewConstructionBox", input),
+    listConstructionFiles: () => invokeModel("ai:listConstructionFiles"),
+    previewConstructionFile: (input) =>
+      invokeModel("ai:previewConstructionFile", input),
+    proposeKnowledge: (input) => invokeModel("ai:proposeKnowledge", input),
+    retrieveKnowledge: (input) => invokeModel("ai:retrieveKnowledge", input),
     saveAgent: (input) => invokeModel("ai:saveAgent", input),
     chooseAgentAvatar: () => invokeModel("ai:chooseAgentAvatar"),
+    chooseAgentBackdrop: (kind) => invokeModel("ai:chooseAgentBackdrop", kind),
     previewBoxSelection: (paths) =>
       invokeModel("ai:previewBoxSelection", paths),
     inspectContextBox: (id) => invokeModel("ai:inspectContextBox", id),

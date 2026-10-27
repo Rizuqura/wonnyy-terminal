@@ -14,7 +14,7 @@ function budgetHistory(baseMessages, history, settings) {
   if (baseTokens > available)
     throw new ModelRuntimeError(
       "MODEL_CONTEXT_TOO_LARGE",
-      `Context Box and question need approximately ${baseTokens} input tokens; ${available} are available (${settings.contextWindow} window minus ${settings.outputLimit} output and 256 reserve). Increase the context window or remove files from this box. No sources were truncated.`,
+      `Context Box, agent references and question need approximately ${baseTokens} input tokens; ${available} are available (${settings.contextWindow} window minus ${settings.outputLimit} output and 256 reserve). Increase the context window or use smaller research/guidance boxes. No sources were truncated.`,
       {
         estimatedTokens: baseTokens,
         available,

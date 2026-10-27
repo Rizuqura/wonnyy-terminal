@@ -60,7 +60,40 @@ async function main() {
       );
       if (!run) {
         await fs.mkdir("test-results", { recursive: true });
+        await page.evaluate(async () => {
+          const background = getComputedStyle(
+            document.querySelector(".startup-screen"),
+          ).backgroundImage;
+          const match = background.match(/url\(["']?(.*?)["']?\)/);
+          if (!match || !background.includes("linear-gradient"))
+            throw Error("Missing startup artwork or dark overlay");
+          await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = resolve;
+            image.onerror = () =>
+              reject(Error("Startup artwork failed to load"));
+            image.src = match[1];
+          });
+        });
         await page.screenshot({ path: "test-results/startup.png" });
+        const viewport = page.viewportSize();
+        await page.setViewportSize({ width: 480, height: 720 });
+        const button = screen.getByRole("button", {
+          name: "Continue to workspace",
+        });
+        await button.focus();
+        const bounds = await button.boundingBox();
+        assert.ok(
+          bounds.x >= 0 &&
+            bounds.x + bounds.width <= 480 &&
+            bounds.y + bounds.height <= 720,
+        );
+        await page.screenshot({ path: "test-results/startup-narrow.png" });
+        await page.setViewportSize({ width: 900, height: 480 });
+        await button.scrollIntoViewIfNeeded();
+        assert.ok(await button.isVisible());
+        await page.screenshot({ path: "test-results/startup-short.png" });
+        await page.setViewportSize(viewport ?? { width: 1440, height: 860 });
       }
       await app.evaluate(() => globalThis.releaseStartup());
       await screen.waitFor({ state: "hidden" });
@@ -86,7 +119,7 @@ async function main() {
     await screen.waitFor({ state: "hidden" });
     assert.equal(await page.locator("main").evaluate((el) => el.inert), false);
     console.log(
-      "PASS: startup progress on each renderer start; completion unlocks workspace without creating chats; scan failure allows recovery",
+      "PASS: startup artwork and dark gradient load; narrow/short layouts and keyboard focus; progress on each renderer start; completion unlocks workspace without creating chats; scan failure allows recovery",
     );
   } finally {
     await app?.close();

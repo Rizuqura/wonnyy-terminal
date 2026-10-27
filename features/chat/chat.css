@@ -846,3 +846,56 @@
   color: #9eafc1;
   font-size: 10px;
 }
+dialog.knowledge-proposal-dialog {
+  position: fixed;
+  inset: 24px;
+  margin: auto;
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 0;
+  border-radius: 12px;
+  background: #10161f;
+  color: #dbe3ed;
+  font:
+    13px/1.6 "Segoe UI",
+    sans-serif;
+}
+.knowledge-proposal-dialog .confirmation-actions {
+  flex-wrap: wrap;
+}
+.knowledge-proposal-dialog textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  resize: vertical;
+  background: #17232d;
+  color: #dce7ef;
+  border: 0;
+  border-radius: 8px;
+  font:
+    12px/1.5 ui-monospace,
+    monospace;
+}
+.knowledge-proposal-dialog pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+}
+.agent-knowledge-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  margin: 12px 0;
+  border-radius: 10px;
+  background: #20313d;
+  color: #c6dce2;
+}
+.agent-knowledge-choice input {
+  width: auto;
+  flex: 0 0 auto;
+  margin-top: 4px;
+}

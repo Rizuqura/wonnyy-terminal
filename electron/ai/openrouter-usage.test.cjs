@@ -7,6 +7,25 @@ const data = {
   limit_reset: "weekly",
   usage_weekly: 25.5,
 };
+test("credit resets follow UTC calendar boundaries including Mondays, leap days and year changes", () => {
+  for (const [cadence, time, expected] of [
+    ["daily", "2028-02-28T23:59:59Z", "2028-02-29T00:00:00.000Z"],
+    ["weekly", "2026-11-01T23:59:59Z", "2026-11-02T00:00:00.000Z"],
+    ["weekly", "2026-11-02T00:00:00Z", "2026-11-09T00:00:00.000Z"],
+    ["monthly", "2026-12-31T23:59:59Z", "2027-01-01T00:00:00.000Z"],
+    [null, "2026-12-31T23:59:59Z", null],
+    ["unknown", "2026-12-31T23:59:59Z", null],
+  ])
+    assert.equal(
+      normalize({ ...data, limit_reset: cadence }, "safe", Date.parse(time))
+        .resetAt,
+      expected,
+    );
+  assert.equal(
+    normalize({ limit: null, limit_reset: "daily" }, "safe", 0).resetAt,
+    null,
+  );
+});
 function fixture(fetchImpl) {
   let time = 100000,
     key = "synthetic-A",

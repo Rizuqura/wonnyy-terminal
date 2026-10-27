@@ -1,5 +1,33 @@
 # QTerminal 1.0.0 Victoria - project state
 
+## Latest increment: single-file agent node sources
+
+Each non-LLM construction node now selects a Context Box or one directly reviewed vault file. Full Markdown/CSV/extracted-PDF text is supported with source/hash provenance, draft/apply, token budgeting and explicit new-chat confirmation for research sources. No box is created for a file binding. The experimental training/model execution work was removed at the user's request. See [single-file-agent-handoff.md](feature/single-file-agent-handoff.md).
+
+## Latest increment: Add agent
+
+The Agent contact list now offers explicit **+ Add agent** creation. New agents use the blank CHronoZ-style template, with no PFP, custom preferences, registered skills, appearance images or source bindings. Custom IDs persist in the existing agent store and are accepted by the shared chat engine; contact listing, construction, histories, drafts and restart restoration support them. Creation is guarded against duplicates and does not create a chat. See [add-agent-handoff.md](feature/add-agent-handoff.md).
+
+## Latest increment: less brittle numeric evidence checks
+
+The dataset/statistics answer gate now accepts precision-aware rounding, compact scales and equivalent percentage notation. Explicit basic numeric equations are recomputed locally from supported inputs and recorded under `diagnostics.answerNumberValidation`. Incorrect equations and unsupported new values still receive one bounded repair, then a clearer error with rejected values. This remains a consistency guard, not verification of units or factual interpretation. See [numeric-evidence-handoff.md](feature/numeric-evidence-handoff.md).
+
+## Latest increment: build agents from Context Boxes
+
+Every non-LLM construction node can now hold a reviewed, vault-scoped Context Box binding. Personality, Output, Skill and Workflow supply role-specific guidance under protected policy; Context is a default choice for explicit chat creation, while Knowledge sources require the new-chat inclusion checkbox. Draft/apply, source/hash checks, budget accounting and immutable run provenance extend through the backend. Changed guidance requires explicit re-review; changed Knowledge cannot silently resume an older bound chat. No document snapshots, executable capabilities or automatic sessions are introduced. See [context-built-agents-handoff.md](feature/context-built-agents-handoff.md). This supersedes the earlier restriction that the Knowledge node was only available with consolidation: research box guidance is available to all default agents; the consolidation capability remains separately registered.
+
+## Latest increment: agent appearance and readable chat
+
+The floating agent editor now includes per-agent local banners, wallpapers, dimming and message font sizes, with draft/apply separation and managed image references. Chat uses comfortable bubbles and safe Markdown rendering for completed answers; raw HTML and remote image embeds are inert. Appearance never becomes provider context. See [agent-appearance-handoff.md](feature/agent-appearance-handoff.md) for persistence, validation and verification.
+
+## Latest increment: shared Agent Construction Studio
+
+Each agent's three-dot menu now opens its own floating Agent Construction editor. The Studio has been removed from global Settings and the duplicate profile form has been removed. The common bubble-node template, managed PFP/identity editing, personality/instructions, typed connections, per-agent model selection and separate saved-draft/active revisions are preserved. Applied preferences reach the existing runtime; protected Context Box authority and agent capability registration remain unchanged. See [agent-construction-handoff.md](feature/agent-construction-handoff.md) for persistence, node semantics, verification and limits. Existing pending knowledge-consolidation work is preserved.
+
+## Latest increment: persistent knowledge proposals (2026-10-26)
+
+Wonnyy-only `knowledge-consolidation` is registered as a reviewed proposal capability. Completed runs can stage structured observations in an app-owned outbox outside the Bank Vault; a separate operator CLI approves versioned Markdown. Session-bound deterministic retrieval is preview-only. No `/loop` executor exists; invoking it now fails explicitly rather than suggesting a loop ran. Automatic extraction and Context Box/prompt injection remain unimplemented. See [knowledge-consolidation-handoff.md](feature/knowledge-consolidation-handoff.md) for permissions, schema, recovery and acceptance gaps. This supersedes earlier descriptions of Wonnyy's empty skill list; CHronoZ remains empty.
+
 ## Victoria release UI - 2026-10-26
 
 CHronoZ is now a real selectable chat agent with blank custom instructions/skills/PFP and separate conversations/preferences. Planet View gains wider orbital spacing, larger picking assistance and a Focus canvas toggle. Desktop bridge is **18**. See [CHronoZ and Planet handoff](./feature/chronoz-planet-handoff.md); earlier dummy-only descriptions below are historical.

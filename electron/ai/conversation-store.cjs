@@ -22,9 +22,17 @@ function validId(id) {
 }
 
 function validateConversation(value) {
+  if (value?.agentKnowledge) {
+    require("./schemas.cjs").parse(
+      require("./agent-construction.cjs").constructionSourceSchema,
+      value.agentKnowledge,
+      "MODEL_STORAGE_INVALID",
+    );
+    validateContextIdentity(value.agentKnowledge.contextIdentity);
+  }
   if (
     !value ||
-    ![1, 2, 3].includes(value.schemaVersion) ||
+    ![1, 2, 3, 4].includes(value.schemaVersion) ||
     !ID.test(value.id) ||
     typeof value.title !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
@@ -42,7 +50,7 @@ function validateConversation(value) {
   )
     throw new Error("Invalid agent binding.");
   if (
-    value.schemaVersion >= 2 &&
+    [2, 3].includes(value.schemaVersion) &&
     (typeof value.contextBoxId !== "string" ||
       !ID.test(value.contextBoxId) ||
       typeof value.creationId !== "string" ||
@@ -51,6 +59,21 @@ function validateConversation(value) {
       value.contextBoxRevision < 1)
   )
     throw new Error("Invalid Context Box binding.");
+  if (value.schemaVersion === 4) {
+    require("./schemas.cjs").parse(
+      require("./agent-construction.cjs").contextFileBindingSchema,
+      value.contextFile,
+      "MODEL_STORAGE_INVALID",
+    );
+    validateContextIdentity(value.contextFile.contextIdentity);
+    if (
+      value.contextBoxId !== undefined ||
+      value.contextBoxRevision !== undefined ||
+      !ID.test(value.creationId)
+    )
+      throw new Error("Invalid direct-file chat binding.");
+  } else if (value.contextFile !== undefined)
+    throw new Error("Direct file chats require schema 4.");
   const source = value.contextIdentity.sources[0];
   validateContextIdentity(value.contextIdentity);
   if (
@@ -70,7 +93,7 @@ function validateConversation(value) {
       throw new Error("Invalid conversation message.");
   }
   for (const attempt of value.attempts) {
-    if (value.schemaVersion === 3)
+    if (value.schemaVersion >= 3)
       validateContextIdentity(attempt.contextIdentity);
     if (
       !ID.test(attempt.requestId) ||
@@ -97,19 +120,20 @@ function validateConversation(value) {
   for (const message of value.messages.filter(
     (item) => item.role === "assistant",
   )) {
-    if (value.schemaVersion === 3)
+    if (value.schemaVersion >= 3)
       validateContextIdentity(message.contextIdentity);
     if (
       typeof message.model !== "string" ||
       (message.provider !== undefined &&
-        !["ollama", "gemini", "nvidia", "openrouter"].includes(
+        // Read compatibility for retired prototype messages; no execution adapter.
+        !["ollama", "gemini", "nvidia", "openrouter", "local-tabular"].includes(
           message.provider,
         )) ||
       !value.attempts.some(
         (attempt) =>
           attempt.runId === message.runId &&
           attempt.status === "succeeded" &&
-          (value.schemaVersion !== 3 ||
+          (value.schemaVersion < 3 ||
             attempt.contextIdentity.id === message.contextIdentity.id) &&
           attempt.userMessageId === message.userMessageId,
       ) ||
@@ -148,11 +172,30 @@ function applyRun(conversation, attempt, record) {
       sources: record.sourcesActuallyRead,
       model: record.model,
       provider: record.provider,
-      ...(conversation.schemaVersion === 3
+      ...(record.diagnostics?.agentKnowledge
+        ? {
+            knowledgeBox: {
+              id:
+                record.diagnostics.agentKnowledge.boxId ??
+                record.diagnostics.agentKnowledge.contextIdentity.id,
+              name:
+                record.diagnostics.agentKnowledge.boxName ??
+                record.diagnostics.agentKnowledge.relativePath,
+            },
+          }
+        : {}),
+      ...(conversation.schemaVersion >= 3
         ? { contextIdentity: record.contextIdentity }
         : {}),
       ...(record.diagnostics?.contextBox
         ? { contextBox: record.diagnostics.contextBox }
+        : {}),
+      ...(record.diagnostics?.contextFile
+        ? {
+            contextFile: {
+              relativePath: record.diagnostics.contextFile.relativePath,
+            },
+          }
         : {}),
     });
   }
@@ -199,12 +242,16 @@ class ConversationStore {
     box = null,
     creationId = null,
     agentId = "wonnyy-agent",
+    agentKnowledge = null,
+    contextFile = null,
   ) {
     return this.queue(async () => {
       const timestamp = new Date().toISOString();
       const value = {
-        schemaVersion: box ? 3 : 1,
+        schemaVersion: contextFile ? 4 : box ? 3 : 1,
         agentId: validId(agentId),
+        ...(agentKnowledge ? { agentKnowledge } : {}),
+        ...(contextFile ? { contextFile, creationId } : {}),
         ...(box
           ? {
               contextBoxId: box.id,
@@ -213,9 +260,10 @@ class ConversationStore {
             }
           : {}),
         id: randomUUID(),
-        title: box
-          ? "Untitled chat"
-          : path.basename(contextIdentity.sources[0].relativePath),
+        title:
+          box || contextFile
+            ? "Untitled chat"
+            : path.basename(contextIdentity.sources[0].relativePath),
         createdAt: timestamp,
         updatedAt: timestamp,
         contextIdentity,

@@ -1,5 +1,15 @@
 # QTerminal 1.0.0 Victoria
 
+Agent construction now accepts **Single file** as well as **Context Box** for each non-LLM node. In an agent's **⋯** settings, select a node, choose the source method, review the full vault file and its estimated tokens, then **Use reviewed file → Save & apply**. Supported files are Markdown, CSV and extracted PDF text. Context/Knowledge files are explicitly confirmed when creating a chat. See the [single-file handoff](big-context/feature/single-file-agent-handoff.md) and `npm run test:single-file:electron`.
+
+Use **Agent → + Add agent** to create your own agent. Each starts like an unconfigured CHronoZ: no profile image, custom instructions, skills or bound Context Boxes. A letter placeholder identifies the contact until you upload a PFP. Open its **⋯** menu to configure construction, Context Boxes and appearance; chats and drafts stay separate by agent. See the [Add agent handoff](big-context/feature/add-agent-handoff.md) and `npm run test:add-agent:electron`.
+
+Build agents from your reviewed Context Boxes through **Agent → an agent's three-dot menu → select a construction node**. Attach separate boxes for Personality, Output, Skill or Workflow guidance; set a default research Context and optional Knowledge sources for new chats. Review the full source text before attaching, then **Save & apply**. Drafts stay inactive, and Knowledge inclusion is confirmed in the new-chat picker. Applies to Wonnyy, CHronoZ and future default agents. See the [Context-built agents handoff](big-context/feature/context-built-agents-handoff.md) and `npm run test:box-agents:electron`.
+
+Agent profiles now support local banners and chat wallpapers, dimming and message text size through the floating editor's **Profile banner & chat appearance** section. Chat bubbles render readable Markdown including bold, lists, code and tables. See the [appearance handoff](big-context/feature/agent-appearance-handoff.md) and `npm run test:appearance:electron`.
+
+**Agent → an agent's three-dot menu** opens its floating Agent Construction editor for Wonnyy, CHronoZ and future default agents. Customize identity/PFP, personality, instructions and a per-agent model; save drafts separately from the active runtime configuration. Global Settings remains for vault/providers/models. See the [Studio handoff](big-context/feature/agent-construction-handoff.md). Run `npm run test:construction:electron` for isolated interaction/runtime/restart verification.
+
 Victoria adds comfortable Workspace and Planet View chat surfaces, readable document typography, and explicit file-to-context review while retaining retro Context Box and Station tools. See the [Victoria handoff](big-context/feature/victoria-workspace-handoff.md).
 
 The **Wonnyy Agent** chat workflow uses saved named Context Boxes and explicitly created sessions. See the [refactor handoff](big-context/feature/wonnyy-agent-handoff.md) for source binding, legacy history behavior and desktop verification.
@@ -67,6 +77,8 @@ Existing reviewed Active Context remains available through **Save Active Context
 
 ## CSV analysis
 
+Numeric answer checks now allow precision-aware rounding, equivalent percentages and compact scales. Basic arithmetic shown as a complete equation is recomputed locally against supported inputs; verified derivations are recorded with the run. Unsupported values or incorrect equations still receive one bounded correction before an actionable error. See the [numeric evidence rule](big-context/feature/numeric-evidence-handoff.md) for limits and verification.
+
 NVIDIA HTTP 500/502/503/504 failures are retried automatically up to twice before an answer stream is consumed, within the original request deadline. This retries the failed model request without restarting completed CSV calculations. Backoff respects Retry-After up to ten seconds; longer waits require explicit retry. Cancellation, authentication failures, rate limits and interrupted answer streams are not automatically retried.
 
 Add CSV files to a Context Box, explicitly create or attach a chat, select an available model, and ask a dataset question. Wonnyy parses the full CSV in a cancellable worker, sends column profiles and a small sample to the model, validates its structured requests, and executes calculations locally. The final answer receives computed results and includes source/filter evidence. The run audit stores requests and results under `diagnostics.datasetAnalysis`.
@@ -117,3 +129,7 @@ For a real online benchmark, set `GEMINI_API_KEY` and `WONNYY_GEMINI_MODEL` in y
 - **Interrupted response:** restart recovery retains the question; Retry starts a new recorded attempt.
 
 Earlier product ideas and completed milestones are preserved in `big-context/`. The [original README](big-context/archive/readme-v0.0.1.md) is archived for historical context.
+
+## Persistent knowledge proposals
+
+Completed Wonnyy answers now offer **Create knowledge proposal**. Structured observations are staged in a separate app-owned outbox, not the Bank Vault. Independent operator approval creates immutable reviewed Markdown; previews retrieve only relevant approved knowledge whose source hashes match the chat. CHronoZ has no consolidation skill. `/loop` is not installed in this repository; automatic loop extraction and prompt loading remain unimplemented. See [the architecture, schema, approval commands and acceptance gaps](big-context/feature/knowledge-consolidation-handoff.md). Run `npm run test:knowledge:electron` for the isolated UI/IPC/CLI/restart check.

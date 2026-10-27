@@ -13,6 +13,152 @@ const image = {
   resize: () => image,
   toPNG: () => png,
 };
+test("retired prototype references do not block file-based profiles or rewrite saved data", async (t) => {
+  const { store } = await fixture(t);
+  const agent = await store.get("chronoz");
+  await store.saveConstruction({
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config: agent.construction.draft,
+  });
+  const state = JSON.parse(await fs.readFile(store.file, "utf8"));
+  for (const config of [
+    state.agents.chronoz.construction.active,
+    state.agents.chronoz.construction.draft,
+  ])
+    config.nodes.find((node) => node.kind === "Skill").config.tabularModelId =
+      "a".repeat(64);
+  const original = JSON.stringify(state);
+  await fs.writeFile(store.file, original);
+  const restored = await store.get("chronoz");
+  assert.equal(
+    restored.construction.active.nodes.find((node) => node.kind === "Skill")
+      .config.tabularModelId,
+    undefined,
+  );
+  assert.equal(await fs.readFile(store.file, "utf8"), original);
+});
+test("new agents start from blank defaults without inheriting photos, preferences or capabilities", async (t) => {
+  const { root, store } = await fixture(t);
+  await store.save({
+    id: "chronoz",
+    customInstructions: "CHRONO_PRIVATE: Use tables.",
+    avatarDataUrl: await store.prepareAvatar(png, ".png"),
+  });
+  const before = await store.get("chronoz");
+  const creationId = require("node:crypto").randomUUID();
+  const agent = await store.create({
+    name: "  Research assistant  ",
+    creationId,
+  });
+  assert.equal(agent.id, "agent-" + creationId);
+  assert.equal(agent.displayName, "Research assistant");
+  assert.deepEqual(agent.avatar, { type: "letter", letter: "R" });
+  assert.equal(agent.avatarUrl, null);
+  assert.equal(agent.construction.draftAvatarUrl, null);
+  assert.equal(agent.appearance.bannerUrl, null);
+  assert.equal(agent.appearance.wallpaperUrl, null);
+  assert.equal(agent.customInstructions, "");
+  assert.equal(agent.personality, "");
+  assert.equal(agent.description, "");
+  assert.deepEqual(agent.skills, []);
+  assert.deepEqual(agent.availableSkills, []);
+  assert.deepEqual(agent.runtimeModel, {});
+  assert.equal(agent.construction.active, null);
+  assert.equal(agent.construction.draft.nodes.length, 4);
+  assert.ok(
+    agent.construction.draft.nodes.every(
+      (node) => !node.config.contextBox && !node.config.skillId,
+    ),
+  );
+  assert.match(agent.protectedInstructions, /You are Research assistant/);
+  assert.doesNotMatch(agent.protectedInstructions, /CHRONO_PRIVATE/);
+  assert.deepEqual(await store.get("chronoz"), before);
+  const saved = await fs.readFile(store.file, "utf8");
+  const restarted = new AgentStore(root, () => image);
+  assert.deepEqual(
+    (await restarted.list()).map((profile) => profile.id),
+    [AGENT_ID, "chronoz", agent.id],
+  );
+  assert.equal((await restarted.get(agent.id)).avatarUrl, null);
+  assert.equal(
+    await fs.readFile(store.file, "utf8"),
+    saved,
+    "listing does not rewrite saved profiles",
+  );
+});
+
+test("agent creation is idempotent and name validation cannot mutate existing profiles", async (t) => {
+  const { store } = await fixture(t);
+  const request = {
+    name: "Analyst",
+    creationId: require("node:crypto").randomUUID(),
+  };
+  const created = await Promise.all([
+    store.create(request),
+    store.create(request),
+  ]);
+  assert.equal(created[0].id, created[1].id);
+  assert.equal((await store.list()).length, 3);
+  const before = await fs.readFile(store.file, "utf8");
+  for (const patch of [
+    { ...request, name: "Different" },
+    { name: "analyst", creationId: require("node:crypto").randomUUID() },
+    { name: " Wonnyy Agent ", creationId: require("node:crypto").randomUUID() },
+    { name: "", creationId: require("node:crypto").randomUUID() },
+    { name: " ", creationId: require("node:crypto").randomUUID() },
+    { name: "x".repeat(121), creationId: require("node:crypto").randomUUID() },
+    { ...request, creationId: "../invalid" },
+    { ...request, avatarDataUrl: "https://example.com/pfp.png" },
+    { ...request, id: AGENT_ID },
+    { ...request, skills: ["knowledge-consolidation"] },
+  ])
+    await assert.rejects(store.create(patch), {
+      code: "MODEL_INVALID_REQUEST",
+    });
+  assert.equal(await fs.readFile(store.file, "utf8"), before);
+  await assert.rejects(store.get("not-created"), {
+    code: "MODEL_INVALID_REQUEST",
+  });
+});
+
+test("custom agents can apply independent construction and reset an uploaded PFP to their own initial", async (t) => {
+  const { store } = await fixture(t);
+  const a = await store.create({
+    name: "Research",
+    creationId: require("node:crypto").randomUUID(),
+  });
+  const b = await store.create({
+    name: "Assistant",
+    creationId: require("node:crypto").randomUUID(),
+  });
+  const config = structuredClone(a.construction.draft);
+  config.displayName = "Research desk";
+  config.instructions = "Use brief findings.";
+  await store.saveConstruction({
+    id: a.id,
+    action: "apply",
+    config,
+    expectedRevision: 0,
+    avatarDataUrl: await store.prepareAvatar(png, ".png"),
+  });
+  const active = await store.get(a.id);
+  assert.equal(active.displayName, "Research desk");
+  assert.equal(active.avatar.type, "local-asset");
+  assert.equal((await store.get(b.id)).customInstructions, "");
+  assert.equal((await store.get(b.id)).avatarUrl, null);
+  await store.save({
+    id: a.id,
+    customInstructions: "Use brief findings.",
+    avatarDataUrl: null,
+  });
+  assert.deepEqual((await store.get(a.id)).avatar, {
+    type: "letter",
+    letter: "R",
+  });
+  assert.equal((await store.get(a.id)).avatarUrl, null);
+});
 test("CHronoZ defaults are blank, read without writes, and persist independently from Wonnyy", async (t) => {
   const { root, store } = await fixture(t);
   const chrono = await store.get("chronoz");

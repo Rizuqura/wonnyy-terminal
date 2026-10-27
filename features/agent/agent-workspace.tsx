@@ -5,6 +5,7 @@ import type { ChatController } from "../chat/use-chat-runtime";
 import type { ContextBox } from "../../types/ai";
 import { ChatPanel } from "../chat/chat-panel";
 import { AgentContacts } from "./agent-contacts";
+import { AddAgentDialog } from "./add-agent-dialog";
 import {
   DEFAULT_AGENT_WIDTHS,
   clampAgentWidths,
@@ -23,6 +24,7 @@ export function AgentWorkspace({
   onOpenSource: (path: string) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [addingAgent, setAddingAgent] = useState(false);
   const [widths, setWidths] = useState<AgentWidths>(DEFAULT_AGENT_WIDTHS),
     [available, setAvailable] = useState(1200),
     [drawer, setDrawer] = useState<"history" | "details" | null>(null);
@@ -187,6 +189,7 @@ export function AgentWorkspace({
     />
   );
   const boxLabel =
+    chat.conversation?.contextFile?.relativePath ??
     box?.name ??
     chat.contextBoxes.find((b) => b.id === boxId)?.name ??
     (boxId ? "Unavailable Context Box" : "No Context");
@@ -207,6 +210,7 @@ export function AgentWorkspace({
           agents={chat.agents}
           activeAgentId={chat.activeAgentId}
           onActivate={activateAgent}
+          onAdd={() => setAddingAgent(true)}
           conversations={chat.conversations}
           contextBoxes={chat.contextBoxes}
           selectedId={chat.conversation?.id}
@@ -224,6 +228,9 @@ export function AgentWorkspace({
           Reset panel widths
         </button>
       </aside>
+      {addingAgent && (
+        <AddAgentDialog chat={chat} onClose={() => setAddingAgent(false)} />
+      )}
       {divider("history")}
       <div className="agent-chat-pane">
         <div className="agent-mobile-controls">
@@ -256,7 +263,11 @@ export function AgentWorkspace({
           aria-label="Agent context details"
         >
           <h2>CONTEXT / DETAILS</h2>
-          <h3>Active Context Box</h3>
+          <h3>
+            {chat.conversation?.contextFile
+              ? "Active research file"
+              : "Active Context Box"}
+          </h3>
           <strong>{boxLabel}</strong>
           {boxError && <p role="alert">{boxError}</p>}
           {chat.unavailableReason && (
@@ -288,6 +299,20 @@ export function AgentWorkspace({
               </ul>
             </>
           )}
+          {chat.conversation?.contextFile && (
+            <p>
+              Single reviewed file · ~
+              {chat.conversation.contextFile.estimatedTokens.toLocaleString()}{" "}
+              tokens.{" "}
+              <button
+                onClick={() =>
+                  onOpenSource(chat.conversation!.contextFile!.relativePath)
+                }
+              >
+                Open source
+              </button>
+            </p>
+          )}
           {chat.runtime.state === "CONTEXT_TOO_LARGE" && (
             <p role="alert">
               Over Budget. Reduce the box membership explicitly before retrying;
@@ -305,10 +330,10 @@ export function AgentWorkspace({
             {chat.registry?.online
               ? "Provider connected"
               : "Provider not ready"}{" "}
-            · {chat.registry?.settings.providerId ?? "Loading"}
+            · {chat.effectiveSettings?.providerId ?? "Loading"}
           </p>
           <small>
-            {chat.registry?.settings.modelId ?? "Choose a model in Settings"}
+            {chat.effectiveSettings?.modelId ?? "Choose a model in Settings"}
           </small>
           <button onClick={onSettings}>Agent Settings</button>
         </aside>

@@ -18,12 +18,12 @@ export function StartupProgress({
           className="startup-brand"
           src="./qterminal-logo.png"
           alt=""
-          width={56}
-          height={56}
+          width={128}
+          height={128}
         />
         <h1>QTerminal</h1>
         <p className="startup-version">1.0.0 Victoria</p>
-        <p role="status" aria-live="polite">
+        <p className="startup-stage" role="status" aria-live="polite">
           {label}
         </p>
         <progress aria-label="Startup progress" max={100} value={progress} />
@@ -37,6 +37,9 @@ export function StartupProgress({
           </p>
         )}
         <button type="button" onClick={onContinue}>
+          <span className="startup-continue-icon" aria-hidden="true">
+            →
+          </span>
           Continue to workspace
         </button>
       </div>

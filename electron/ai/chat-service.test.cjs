@@ -12,6 +12,662 @@ const { budgetHistory } = require("./history-budget.cjs");
 const { answerPrefix, validateAnswer } = require("./response-validation.cjs");
 
 const scopeInput = { activeStationIds: [], matchMode: "any" };
+test("direct file guidance uses the entire reviewed document without creating a hidden box or session", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const content =
+    "FULL_METHOD_START\n" +
+    "Method guidance. ".repeat(1300) +
+    "\nFULL_METHOD_END";
+  await f.registry.save({ contextWindow: 32768 });
+  await fs.writeFile(path.join(f.root, "method.md"), content);
+  const beforeBoxes = (await f.service.listBoxes(f.root)).length,
+    beforeChats = (await f.service.list(f.root)).length;
+  const preview = await f.service.previewConstructionFile(f.root, {
+    relativePath: "method.md",
+  });
+  assert.equal(preview.sources[0].content, content);
+  config.nodes.find((node) => node.kind === "Skill").config.contextFile =
+    preview.binding;
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  const result = await f.service.run(f.root, 1, f.input());
+  const envelope = f.calls
+    .at(-1)
+    .messages.map((m) => {
+      try {
+        return JSON.parse(m.content);
+      } catch {
+        return null;
+      }
+    })
+    .find((v) => v?.kind === "agent-construction-reference");
+  assert.equal(envelope.sources[0].content, content);
+  assert.deepEqual(
+    result.run.sourcesActuallyRead.map((source) => source.relativePath),
+    ["a.md"],
+  );
+  assert.equal(
+    result.run.diagnostics.agent.configurationReferences[0].relativePath,
+    "method.md",
+  );
+  assert.equal((await f.service.listBoxes(f.root)).length, beforeBoxes);
+  assert.equal((await f.service.list(f.root)).length, beforeChats);
+  assert.ok(
+    !(await fs.readFile(f.service.agents.file, "utf8")).includes(
+      "FULL_METHOD_END",
+    ),
+  );
+});
+test("Context and Knowledge file bindings create explicit schema-4 chats with immutable per-turn provenance", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const a = (
+      await f.service.previewConstructionFile(f.root, { relativePath: "a.md" })
+    ).binding,
+    b = (
+      await f.service.previewConstructionFile(f.root, { relativePath: "b.md" })
+    ).binding;
+  config.nodes.find((node) => node.kind === "Context").config.contextFile = a;
+  const knowledge = nodeWithBox(config, "Knowledge", null);
+  delete knowledge.config.contextBox;
+  knowledge.config.contextFile = b;
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  const boxes = (await f.service.listBoxes(f.root)).length,
+    creationId = randomUUID();
+  const chat = await f.service.create(f.root, {
+    agentId: agent.id,
+    contextFile: a,
+    creationId,
+    includeAgentKnowledge: true,
+  });
+  assert.equal(chat.schemaVersion, 4);
+  assert.equal(chat.contextBoxId, undefined);
+  assert.deepEqual(
+    chat.contextIdentity.sources.map((source) => source.relativePath),
+    ["a.md", "b.md"],
+  );
+  assert.equal(
+    (
+      await f.service.create(f.root, {
+        agentId: agent.id,
+        contextFile: a,
+        creationId,
+        includeAgentKnowledge: true,
+      })
+    ).id,
+    chat.id,
+  );
+  const first = await f.service.run(f.root, 1, f.input(chat));
+  assert.equal(
+    first.conversation.messages.at(-1).contextFile.relativePath,
+    "a.md",
+  );
+  assert.equal(first.conversation.messages.at(-1).knowledgeBox.name, "b.md");
+  await f.service.run(f.root, 1, f.input(first.conversation));
+  assert.equal((await f.service.resume(f.root, chat.id)).messages.length, 4);
+  assert.equal((await f.service.listBoxes(f.root)).length, boxes);
+  await fs.writeFile(path.join(f.root, "a.md"), "CHANGED");
+  await assert.rejects(f.service.run(f.root, 1, f.input(first.conversation)), {
+    code: "MODEL_CONTEXT_INVALID",
+  });
+  assert.equal(
+    (await readModelRun(f.root, first.run.runId)).contextIdentity.id,
+    chat.contextIdentity.id,
+  );
+});
+test("reviewed files reject cross-vault, ambiguous node sources and changed guidance", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const binding = (
+    await f.service.previewConstructionFile(f.root, { relativePath: "a.md" })
+  ).binding;
+  const skill = config.nodes.find((node) => node.kind === "Skill");
+  skill.config.contextFile = { ...binding, vaultPath: f.root + "-other" };
+  await assert.rejects(
+    f.service.saveConstruction(f.root, {
+      id: agent.id,
+      action: "apply",
+      expectedRevision: 0,
+      config,
+    }),
+    /another vault|different vault/,
+  );
+  skill.config.contextFile = binding;
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  await fs.writeFile(path.join(f.root, "a.md"), "Edited method");
+  await assert.rejects(f.service.run(f.root, 1, f.input()), {
+    code: "MODEL_CONTEXT_INVALID",
+  });
+  assert.equal(f.calls.length, 0);
+  await assert.rejects(
+    f.service.previewConstructionFile(f.root, {
+      relativePath: "../outside.md",
+    }),
+  );
+});
+test("created agents use the shared bound-chat engine with independent histories and protected identity", async (t) => {
+  const f = await studioFixture(t);
+  await f.service.agents.save({
+    id: "wonnyy-agent",
+    customInstructions: "WONNYY_PRIVATE: Use numbered findings.",
+  });
+  const count = (await f.service.list(f.root)).length;
+  const agent = await f.service.agents.create({
+    name: "Research assistant",
+    creationId: randomUUID(),
+  });
+  assert.equal((await f.service.list(f.root)).length, count);
+  const chat = await f.service.create(f.root, {
+    agentId: agent.id,
+    creationId: randomUUID(),
+    contextBoxId: f.conversation.contextBoxId,
+  });
+  const result = await f.service.run(f.root, 1, f.input(chat));
+  assert.equal(result.conversation.agentId, agent.id);
+  assert.match(
+    f.calls.at(-1).messages[0].content,
+    /You are Research assistant/,
+  );
+  assert.doesNotMatch(f.calls.at(-1).messages[0].content, /WONNYY_PRIVATE/);
+  assert.equal(result.run.diagnostics.agent.id, agent.id);
+  assert.equal(
+    (await f.service.list(f.root)).find((item) => item.id === f.conversation.id)
+      .messages.length,
+    0,
+  );
+  await assert.rejects(
+    f.service.create(f.root, {
+      agentId: "not-created",
+      creationId: randomUUID(),
+      contextBoxId: f.conversation.contextBoxId,
+    }),
+    { code: "MODEL_INVALID_REQUEST" },
+  );
+  assert.equal((await f.service.list(f.root)).length, count + 1);
+});
+test("contextual skill playbooks work for CHronoZ without enabling executable capabilities", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get("chronoz"),
+    config = structuredClone(agent.construction.draft);
+  const binding = await constructionBox(
+    f,
+    "Chrono method",
+    "method.md",
+    "CHRONO_PLAYBOOK: State assumptions before comparing periods.",
+  );
+  nodeWithBox(config, "Skill", binding);
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  const chat = await f.service.create(f.root, {
+    agentId: agent.id,
+    contextBoxId: f.conversation.contextBoxId,
+    creationId: randomUUID(),
+  });
+  const result = await f.service.run(f.root, 1, f.input(chat));
+  assert.match(JSON.stringify(f.calls.at(-1).messages), /CHRONO_PLAYBOOK/);
+  assert.deepEqual((await f.service.agents.get(agent.id)).skills, []);
+  assert.equal(result.run.sourcesActuallyRead.length, 1);
+});
+test("configuration-source IDs cannot be cited as research evidence", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  nodeWithBox(
+    config,
+    "Personality",
+    await constructionBox(f, "Tone", "persona.md", "Use concise prose."),
+  );
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  f.provider.complete = async (request) => {
+    f.calls.push(request);
+    return {
+      model: request.model,
+      provider: "ollama",
+      finishReason: "stop",
+      content: JSON.stringify({
+        answer: "ALPHA is present.",
+        citations: ["persona.md"],
+      }),
+      usage: null,
+    };
+  };
+  await assert.rejects(f.service.run(f.root, 1, f.input()), {
+    code: "MODEL_INVALID_RESPONSE",
+  });
+  assert.equal(
+    (await f.service.list(f.root))[0].messages.filter(
+      (m) => m.role === "assistant",
+    ).length,
+    0,
+  );
+});
+test("Knowledge source edits or membership changes cannot silently expand existing chats", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const knowledge = await constructionBox(f, "Pinned knowledge", "b.md");
+  nodeWithBox(config, "Knowledge", knowledge);
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  const chat = await f.service.create(f.root, {
+    agentId: agent.id,
+    contextBoxId: f.conversation.contextBoxId,
+    creationId: randomUUID(),
+    includeAgentKnowledge: true,
+  });
+  const first = await f.service.run(f.root, 1, f.input(chat)),
+    before = f.calls.length;
+  await fs.writeFile(path.join(f.root, "b.md"), "UPDATED BETA.");
+  await assert.rejects(f.service.run(f.root, 1, f.input(chat)), {
+    code: "MODEL_CONTEXT_INVALID",
+  });
+  assert.equal(f.calls.length, before);
+  assert.equal(
+    (await f.service.list(f.root)).find((c) => c.id === chat.id).messages
+      .length,
+    2,
+  );
+  assert.equal(
+    (await readModelRun(f.root, first.run.runId)).contextIdentity.id,
+    chat.contextIdentity.id,
+  );
+});
+async function studioFixture(t) {
+  const f = await fixture(t);
+  f.service.agents = new (require("./agent-store.cjs").AgentStore)(
+    path.join(f.root, "agent-profiles"),
+  );
+  return f;
+}
+async function constructionBox(f, name, file, content) {
+  if (content !== undefined)
+    await fs.writeFile(path.join(f.root, file), content);
+  const box = await f.service.editBox(f.root, {
+    action: "create",
+    name,
+    paths: [file],
+  });
+  return (await f.service.previewConstructionBox(f.root, { boxId: box.id }))
+    .binding;
+}
+function nodeWithBox(config, kind, binding) {
+  let node = config.nodes.find((node) => node.kind === kind);
+  if (!node) {
+    node = {
+      id: kind.toLowerCase(),
+      kind,
+      x: 64,
+      y: 360,
+      config: kind === "Knowledge" ? { mode: "preview-only" } : {},
+    };
+    config.nodes.push(node);
+    config.edges.push({ from: node.id, to: "llm" });
+  }
+  node.config.contextBox = binding;
+  return node;
+}
+test("reviewed boxes build personality/output/skill guidance without becoming documentary evidence or snapshots", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  for (const [kind, file, text] of [
+    [
+      "Personality",
+      "persona.md",
+      "STYLE_BOX_SENTINEL: Be concise and cautious.",
+    ],
+    [
+      "Output",
+      "output.md",
+      "OUTPUT_BOX_SENTINEL: Put the answer before an evidence list.",
+    ],
+    [
+      "Skill",
+      "skill.md",
+      "SKILL_BOX_SENTINEL: Compare supporting and contradicting evidence; never assume causality.",
+    ],
+  ])
+    nodeWithBox(
+      config,
+      kind,
+      await constructionBox(f, kind + " blueprint", file, text),
+    );
+  const count = (await f.service.list(f.root)).length;
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "draft",
+    expectedRevision: 0,
+    config,
+  });
+  await f.service.run(f.root, 1, f.input());
+  assert.doesNotMatch(
+    JSON.stringify(f.calls.at(-1).messages),
+    /STYLE_BOX_SENTINEL/,
+  );
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 1,
+    config,
+  });
+  const result = await f.service.run(f.root, 1, f.input());
+  const prompt = f.calls.at(-1).messages;
+  const references = prompt
+    .filter((m) => m.role === "user")
+    .map((m) => {
+      try {
+        return JSON.parse(m.content);
+      } catch {
+        return null;
+      }
+    })
+    .filter((m) => m?.kind === "agent-construction-reference");
+  assert.deepEqual(references.map((r) => r.role).sort(), [
+    "Output",
+    "Personality",
+    "Skill",
+  ]);
+  assert.match(JSON.stringify(references), /STYLE_BOX_SENTINEL/);
+  assert.match(JSON.stringify(references), /SKILL_BOX_SENTINEL/);
+  assert.deepEqual(
+    result.run.sourcesActuallyRead.map((s) => s.relativePath),
+    ["a.md"],
+  );
+  assert.equal(result.run.diagnostics.agent.configurationReferences.length, 3);
+  assert.ok(
+    !JSON.stringify(
+      result.run.diagnostics.agent.configurationReferences,
+    ).includes("STYLE_BOX_SENTINEL"),
+  );
+  assert.ok(
+    !(await fs.readFile(f.service.agents.file, "utf8")).includes(
+      "STYLE_BOX_SENTINEL",
+    ),
+  );
+  assert.equal((await f.service.list(f.root)).length, count);
+  assert.equal(
+    (await f.service.agents.get("chronoz")).construction.active,
+    null,
+  );
+});
+test("Knowledge boxes require explicit chat creation, deduplicate sources and retain historical combined provenance", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const knowledge = await constructionBox(f, "Saved research", "b.md");
+  nodeWithBox(config, "Knowledge", knowledge);
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  assert.equal(
+    (await f.service.checkConversation(f.root, f.conversation.id)).sources
+      .length,
+    1,
+  );
+  const plain = await f.service.create(f.root, {
+    agentId: agent.id,
+    contextBoxId: f.conversation.contextBoxId,
+    creationId: randomUUID(),
+  });
+  assert.equal(plain.contextIdentity.sources.length, 1);
+  const creationId = randomUUID(),
+    combined = await f.service.create(f.root, {
+      agentId: agent.id,
+      contextBoxId: f.conversation.contextBoxId,
+      creationId,
+      includeAgentKnowledge: true,
+    });
+  assert.deepEqual(
+    combined.contextIdentity.sources.map((s) => s.relativePath).sort(),
+    ["a.md", "b.md"],
+  );
+  assert.equal(
+    (
+      await f.service.create(f.root, {
+        agentId: agent.id,
+        contextBoxId: f.conversation.contextBoxId,
+        creationId,
+        includeAgentKnowledge: true,
+      })
+    ).id,
+    combined.id,
+  );
+  await assert.rejects(
+    f.service.create(f.root, {
+      agentId: agent.id,
+      contextBoxId: f.conversation.contextBoxId,
+      creationId,
+      includeAgentKnowledge: false,
+    }),
+    { code: "MODEL_INVALID_REQUEST" },
+  );
+  const result = await f.service.run(f.root, 1, f.input(combined));
+  assert.equal(result.run.sourcesActuallyRead.length, 2);
+  assert.equal(result.run.diagnostics.agentKnowledge.boxId, knowledge.boxId);
+  const switched = await f.service.switchBox(f.root, {
+    conversationId: combined.id,
+    contextBoxId: f.conversation.contextBoxId,
+  });
+  assert.equal(switched.agentKnowledge, undefined);
+  assert.equal(switched.contextIdentity.sources.length, 1);
+  assert.equal(switched.messages.at(-1).sources.length, 2);
+});
+test("changed guidance fails closed until explicit re-review; renaming preserves source identity", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const binding = await constructionBox(
+    f,
+    "Persona notes",
+    "persona.md",
+    "GUIDANCE_V1: Be concise.",
+  );
+  const node = nodeWithBox(config, "Personality", binding);
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  const first = await f.service.run(f.root, 1, f.input());
+  const before = f.calls.length;
+  await fs.writeFile(
+    path.join(f.root, "persona.md"),
+    "GUIDANCE_V2: Use plain language.",
+  );
+  await assert.rejects(f.service.run(f.root, 1, f.input()));
+  assert.equal(f.calls.length, before);
+  assert.equal((await f.service.list(f.root))[0].messages.length, 2);
+  node.config.contextBox = (
+    await f.service.previewConstructionBox(f.root, { boxId: binding.boxId })
+  ).binding;
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 1,
+    config,
+  });
+  await f.service.renameBox(f.root, {
+    id: binding.boxId,
+    name: "Renamed persona notes",
+  });
+  const next = await f.service.run(f.root, 1, f.input());
+  assert.match(JSON.stringify(f.calls.at(-1).messages), /GUIDANCE_V2/);
+  assert.equal(
+    next.run.diagnostics.agent.configurationReferences[0].boxName,
+    "Renamed persona notes",
+  );
+  assert.equal(
+    (await readModelRun(f.root, first.run.runId)).diagnostics.agent
+      .configurationReferences[0].contextIdentity.id,
+    binding.contextIdentity.id,
+  );
+});
+test("guidance references and Knowledge membership cannot expand or cross vaults silently", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const binding = await constructionBox(
+    f,
+    "Persona notes",
+    "persona.md",
+    "LOCAL_GUIDANCE: use concise prose.",
+  );
+  nodeWithBox(config, "Personality", binding);
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  const other = path.join(f.root, "other-vault");
+  await fs.mkdir(other);
+  await fs.writeFile(path.join(other, "a.md"), "OTHER_VAULT content.");
+  const box = await f.service.editBox(other, {
+    action: "create",
+    name: "Other evidence",
+    paths: ["a.md"],
+  });
+  const chat = await f.service.create(other, {
+    agentId: agent.id,
+    contextBoxId: box.id,
+    creationId: randomUUID(),
+  });
+  await assert.rejects(f.service.run(other, 1, f.input(chat)));
+  assert.equal(f.calls.length, 0);
+  await f.service.editBox(f.root, {
+    action: "add",
+    id: binding.boxId,
+    paths: ["b.md"],
+  });
+  await assert.rejects(
+    f.service.saveConstruction(f.root, {
+      id: agent.id,
+      action: "apply",
+      expectedRevision: 1,
+      config,
+    }),
+    /changed membership/,
+  );
+});
+test("configuration references are fully budgeted and oversized guidance is never silently truncated", async (t) => {
+  const f = await studioFixture(t),
+    agent = await f.service.agents.get(),
+    config = structuredClone(agent.construction.draft);
+  const binding = await constructionBox(
+    f,
+    "Large persona",
+    "persona.md",
+    "Context note. ".repeat(4000),
+  );
+  nodeWithBox(config, "Personality", binding);
+  nodeWithBox(config, "Output", binding);
+  await assert.rejects(
+    f.service.saveConstruction(f.root, {
+      id: agent.id,
+      action: "apply",
+      expectedRevision: 0,
+      config,
+    }),
+    /80,000/,
+  );
+  await fs.writeFile(
+    path.join(f.root, "persona.md"),
+    "Style note. ".repeat(800),
+  );
+  config.nodes.find((n) => n.kind === "Personality").config.contextBox = (
+    await f.service.previewConstructionBox(f.root, { boxId: binding.boxId })
+  ).binding;
+  delete config.nodes.find((n) => n.kind === "Output").config.contextBox;
+  await f.service.saveConstruction(f.root, {
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 0,
+    config,
+  });
+  await f.registry.save({ contextWindow: 4096, outputLimit: 512 });
+  await assert.rejects(f.service.run(f.root, 1, f.input()), {
+    code: "MODEL_CONTEXT_TOO_LARGE",
+  });
+  assert.equal(f.calls.length, 0);
+});
+test("applied construction changes actual prompt identity/preferences and model; drafts and old run provenance stay isolated", async (t) => {
+  const f = await fixture(t);
+  const { AgentStore } = require("./agent-store.cjs");
+  f.service.agents = new AgentStore(path.join(f.root, "studio-profiles"));
+  const agent = await f.service.agents.get();
+  const config = structuredClone(agent.construction.draft);
+  config.displayName = "Victoria Research";
+  config.personality = "STUDIO_PERSONALITY: Favor concise prose.";
+  config.nodes.find((n) => n.kind === "LLM").config = {
+    providerId: "ollama",
+    modelId: "qwen3:1.7b",
+  };
+  config.nodes.find((n) => n.kind === "Output").config.instructions =
+    "STUDIO_OUTPUT: End with open questions.";
+  await f.service.agents.saveConstruction({
+    id: agent.id,
+    action: "draft",
+    expectedRevision: 0,
+    config,
+  });
+  const first = await f.service.run(f.root, 1, f.input());
+  assert.doesNotMatch(f.calls.at(-1).messages[0].content, /STUDIO_PERSONALITY/);
+  assert.equal(first.run.model, "qwen3:4b");
+  await f.service.agents.saveConstruction({
+    id: agent.id,
+    action: "apply",
+    expectedRevision: 1,
+    config,
+  });
+  const second = await f.service.run(f.root, 1, f.input());
+  assert.equal(second.run.model, "qwen3:1.7b");
+  assert.match(f.calls.at(-1).messages[0].content, /You are Victoria Research/);
+  assert.match(f.calls.at(-1).messages[0].content, /STUDIO_PERSONALITY/);
+  assert.match(f.calls.at(-1).messages[0].content, /STUDIO_OUTPUT/);
+  assert.match(f.calls.at(-1).messages[0].content, /STRICT_CONTEXT_ANALYSIS/);
+  assert.equal(second.run.diagnostics.agent.constructionRevision, 2);
+  assert.equal(
+    (await readModelRun(f.root, first.run.runId)).diagnostics.agent
+      .constructionRevision,
+    0,
+  );
+  assert.equal((await f.registry.read()).modelId, "qwen3:4b");
+});
 test("agent-bound creation and inference isolate CHronoZ identity, settings, history and duplicate IDs", async (t) => {
   const f = await fixture(t);
   const { AgentStore } = require("./agent-store.cjs");

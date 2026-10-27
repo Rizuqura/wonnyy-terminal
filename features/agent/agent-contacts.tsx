@@ -3,7 +3,9 @@ import { memo, useEffect, useId, useMemo, useState } from "react";
 import type { ComponentProps } from "react";
 import type { AgentConfig, Conversation, ContextBox } from "../../types/ai";
 import { AgentAvatar } from "./agent-avatar";
+import { bannerStyle } from "../chat/chat-presentation";
 import { useConfirmation } from "../dialogs/use-confirmation";
+import { conversationSourceLabel } from "../chat/source-label";
 
 // Stable props keep streaming tokens in the timeline from redrawing contacts.
 const AgentContact = memo(function AgentContact({
@@ -64,6 +66,7 @@ const AgentContact = memo(function AgentContact({
       <div
         className={`agent-bot-row${active ? " selected" : ""}`}
         data-agent-id={agent?.id}
+        style={bannerStyle(agent?.appearance?.bannerUrl)}
       >
         <button
           className="agent-contact-toggle"
@@ -180,10 +183,7 @@ const AgentContact = memo(function AgentContact({
                             "No messages yet"}
                         </span>
                         <small>
-                          {contextBoxes.find(
-                            (box) => box.id === chat.contextBoxId,
-                          )?.name ?? "Unavailable context"}{" "}
-                          ·{" "}
+                          {conversationSourceLabel(chat, contextBoxes)} ·{" "}
                           <time dateTime={chat.updatedAt}>
                             {new Date(chat.updatedAt).toLocaleDateString()}
                           </time>
@@ -240,6 +240,7 @@ export function AgentContacts({
   agents,
   activeAgentId,
   onActivate,
+  onAdd,
   ...props
 }: Omit<
   ComponentProps<typeof AgentContact>,
@@ -248,13 +249,21 @@ export function AgentContacts({
   agents: AgentConfig[];
   activeAgentId: string;
   onActivate: (id: string) => void;
+  onAdd: () => void;
 }) {
   return (
     <section className="agent-contacts" aria-label="Agent contacts">
       <div className="agent-sidebar-heading">
         <span>Agents</span>
-        <small>{agents.length || 2} contacts</small>
+        <small>{agents.length} contacts</small>
       </div>
+      <button
+        className="agent-add-button"
+        disabled={props.busy}
+        onClick={onAdd}
+      >
+        + Add agent
+      </button>
       {agents.map((agent) => (
         <AgentContact
           key={agent.id}

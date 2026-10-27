@@ -144,29 +144,41 @@ async function main() {
     assert.equal(
       await settings
         .getByRole("textbox", {
-          name: "Custom Agent Instructions",
+          name: "Agent behavior instructions",
           exact: true,
         })
         .inputValue(),
       "",
     );
     await settings
-      .getByText("Skills: none configured.", { exact: true })
+      .getByRole("group", { name: "Skill node", exact: true })
+      .getByText("Not configured", { exact: true })
       .waitFor();
+    await settings
+      .getByText("Protected grounding policy", { exact: true })
+      .click();
     assert.match(
-      await settings
-        .getByRole("textbox", {
-          name: "Protected QTerminal / CHronoZ Policy",
-          exact: true,
-        })
-        .inputValue(),
+      await settings.locator("pre").first().innerText(),
       /You are CHronoZ/,
     );
-    await settings.getByRole("button", { name: "Edit", exact: true }).click();
     await settings
-      .getByRole("textbox", { name: "Custom Agent Instructions", exact: true })
+      .getByRole("textbox", {
+        name: "Agent behavior instructions",
+        exact: true,
+      })
       .fill("CHRONOZ_ONLY_PREF: Use brief paragraphs.");
-    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    await settings
+      .getByRole("button", { name: "Save & apply", exact: true })
+      .click();
+    await settings
+      .getByText(
+        "Configuration applied. It will be used on the next request.",
+        { exact: true },
+      )
+      .waitFor();
+    await settings
+      .getByRole("button", { name: "Close agent settings", exact: true })
+      .click();
     await settings.waitFor({ state: "hidden" });
     assert.match(
       (await page.evaluate(() => window.wonnyyDesktop.ai.getAgent("chronoz")))
@@ -185,9 +197,23 @@ async function main() {
       .getByRole("button", { name: "CHronoZ settings", exact: true })
       .click();
     await settings
-      .getByRole("button", { name: "Reset Custom Instructions", exact: true })
+      .getByRole("textbox", {
+        name: "Agent behavior instructions",
+        exact: true,
+      })
+      .fill("");
+    await settings
+      .getByRole("button", { name: "Save & apply", exact: true })
       .click();
-    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    await settings
+      .getByText(
+        "Configuration applied. It will be used on the next request.",
+        { exact: true },
+      )
+      .waitFor();
+    await settings
+      .getByRole("button", { name: "Close agent settings", exact: true })
+      .click();
     await settings.waitFor({ state: "hidden" });
     await create("CHronoZ", "Chronoz research");
     await send("CHronoZ");

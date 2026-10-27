@@ -56,6 +56,18 @@ async function main() {
       });
     });
     await monitor().getByText("$74.50 left", { exact: true }).waitFor();
+    const reset = monitor().getByLabel("Credit reset timer");
+    await reset.getByText(/Key resets in/).waitFor();
+    const initialReset = await reset.innerText();
+    await page.waitForFunction(
+      (initial) =>
+        document.querySelector(".usage-reset")?.textContent !== initial,
+      initialReset,
+    );
+    assert.match(
+      await reset.innerText(),
+      /Key resets in (?:\d+d )?\d{2}:\d{2}:\d{2}/,
+    );
     const toggle = monitor().getByRole("button", { name: /AI BUDGET/ });
     assert.equal(await toggle.getAttribute("aria-expanded"), "false");
     await toggle.press("Enter");
@@ -131,6 +143,12 @@ async function main() {
       .waitFor();
     await fs.mkdir("test-results", { recursive: true });
     await page.screenshot({ path: "test-results/usage-monitor.png" });
+    // Keep the independently floating chat from covering controls at narrow widths.
+    const closeChat = page.getByRole("button", {
+      name: "Close Wonnyy Agent",
+      exact: true,
+    });
+    if (await closeChat.isVisible()) await closeChat.click();
     await page.setViewportSize({ width: 680, height: 700 });
     assert.ok(
       await monitor().evaluate(
@@ -199,6 +217,7 @@ async function main() {
     assert.deepEqual(errors, []);
     const checks = [
       "Verified USD, null wallet/token values, weekly cadence and progress",
+      "Credit reset countdown is visible while collapsed and advances without provider polling",
       "Top-left placement, keyboard collapse and restart persistence",
       "Refresh throttling, stale error state, key/provider isolation",
       "Graph zoom outside badge and event isolation inside; narrow viewport",

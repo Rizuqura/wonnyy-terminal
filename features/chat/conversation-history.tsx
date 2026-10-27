@@ -2,6 +2,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatController } from "./use-chat-runtime";
 import { useConfirmation } from "../dialogs/use-confirmation";
+import type { ConstructionFileBinding } from "../../types/ai";
+import {
+  constructionSourceLabel,
+  conversationSourceLabel,
+} from "./source-label";
 
 export function ConversationHistory({
   chat,
@@ -22,6 +27,11 @@ export function ConversationHistory({
   const [query, setQuery] = useState("");
   const [boxQuery, setBoxQuery] = useState("");
   const [boxId, setBoxId] = useState("");
+  const [selectedFile, setSelectedFile] =
+    useState<ConstructionFileBinding | null>(null);
+  const availableFile =
+    chat.researchDefaults.contextFile ?? chat.conversation?.contextFile;
+  const [includeKnowledge, setIncludeKnowledge] = useState(false);
   const [name, setName] = useState("");
   const [edit, setEdit] = useState<"chat" | "box" | "save" | null>(null);
   const [editId, setEditId] = useState("");
@@ -32,10 +42,14 @@ export function ConversationHistory({
     if (chat.creatingChat) {
       creationId.current = crypto.randomUUID();
       const preferred =
-        chat.preselectedBoxId || chat.conversation?.contextBoxId || "";
-      setBoxId(
-        chat.contextBoxes.some((box) => box.id === preferred) ? preferred : "",
-      );
+        chat.preselectedBoxId ||
+        chat.researchDefaults.contextBoxId ||
+        (!chat.researchDefaults.contextFile &&
+          chat.conversation?.contextBoxId) ||
+        "";
+      setIncludeKnowledge(Boolean(chat.researchDefaults.knowledge));
+      setBoxId(preferred);
+      setSelectedFile(preferred ? null : (availableFile ?? null));
       setBoxQuery("");
       dialog.current?.showModal();
     } else {
@@ -89,11 +103,18 @@ export function ConversationHistory({
         <div className="agent-context-label">
           Context:{" "}
           {chat.conversation
-            ? boxName(chat.conversation.contextBoxId)
+            ? conversationSourceLabel(chat.conversation, chat.contextBoxes)
             : "None attached"}
           {chat.conversation?.contextBoxRevision
             ? ` / revision ${chat.conversation.contextBoxRevision}`
             : ""}
+          {chat.conversation?.agentKnowledge && (
+            <span>
+              {" "}
+              + {constructionSourceLabel(chat.conversation.agentKnowledge)}{" "}
+              (agent knowledge)
+            </span>
+          )}
           {chat.contextBoxes.some(
             (box) => box.id === chat.conversation?.contextBoxId,
           ) && (
@@ -283,7 +304,7 @@ export function ConversationHistory({
                 >
                   <strong>{c.title}</strong>
                   <small>
-                    {boxName(c.contextBoxId)} ·{" "}
+                    {conversationSourceLabel(c, chat.contextBoxes)} ·{" "}
                     {new Date(c.updatedAt).toLocaleString()}
                   </small>
                 </button>
@@ -323,7 +344,23 @@ export function ConversationHistory({
         }}
       >
         <h2 id="agent-create-title">New {agentName} chat</h2>
-        <p>Select a Context Box to start a {agentName} chat.</p>
+        <p>Confirm the research sources for this new {agentName} chat.</p>
+        {availableFile && (
+          <label className="agent-knowledge-choice">
+            <input
+              type="radio"
+              name="context-box"
+              checked={Boolean(selectedFile)}
+              onChange={() => {
+                setSelectedFile(availableFile);
+                setBoxId("");
+              }}
+            />
+            Agent Context file: {availableFile.relativePath} · ~
+            {availableFile.estimatedTokens.toLocaleString()} tokens. Uses the
+            reviewed full file.
+          </label>
+        )}
         <input
           aria-label="Search Context Boxes"
           placeholder="Search Context Boxes"
@@ -342,7 +379,10 @@ export function ConversationHistory({
                   name="context-box"
                   value={b.id}
                   checked={boxId === b.id}
-                  onChange={() => setBoxId(b.id)}
+                  onChange={() => {
+                    setBoxId(b.id);
+                    setSelectedFile(null);
+                  }}
                 />
                 <span>
                   {b.name}
@@ -375,14 +415,14 @@ export function ConversationHistory({
               </label>
             ))}
         </div>
-        {!chat.contextBoxes.length && (
+        {!chat.contextBoxes.length && !availableFile && (
           <p>
             Create a Context Box first. Cancel to create one from selected files
             in Planet View’s context manager, or save reviewed Active Context
             below.
           </p>
         )}
-        {!chat.contextBoxes.length && onManageContext && (
+        {!chat.contextBoxes.length && !availableFile && onManageContext && (
           <button
             onClick={() => {
               chat.cancelCreation();
@@ -393,18 +433,41 @@ export function ConversationHistory({
           </button>
         )}
         {chat.unavailableReason && <p role="alert">{chat.unavailableReason}</p>}
+        {chat.researchDefaults.knowledge && (
+          <label className="agent-knowledge-choice">
+            <input
+              type="checkbox"
+              checked={includeKnowledge}
+              onChange={(event) => setIncludeKnowledge(event.target.checked)}
+            />
+            Include agent Knowledge{" "}
+            {"relativePath" in chat.researchDefaults.knowledge ? "file" : "box"}
+            : {constructionSourceLabel(chat.researchDefaults.knowledge)} (
+            {chat.researchDefaults.knowledge.contextIdentity.sources.length}{" "}
+            reviewed sources). Adds these sources to this new chat only.
+          </label>
+        )}
         {chat.runtime.error && <p role="alert">{chat.runtime.error}</p>}
         <div className="agent-actions">
           <button
             disabled={
               chat.busy ||
-              !boxId ||
-              !chat.contextBoxes.find((b) => b.id === boxId)?.items.length ||
+              (!selectedFile &&
+                (!boxId ||
+                  !chat.contextBoxes.find((b) => b.id === boxId)?.items
+                    .length)) ||
               (chat.contextBoxes.find((b) => b.id === boxId)?.items.length ??
                 0) > 32
             }
             onClick={() => {
-              void chat.createChat(boxId, creationId.current).then(onCompose);
+              void chat
+                .createChat(
+                  boxId,
+                  creationId.current,
+                  includeKnowledge,
+                  selectedFile ?? undefined,
+                )
+                .then(onCompose);
             }}
           >
             {workspace ? "Start Chat" : "Create Chat"}
@@ -426,17 +489,17 @@ export function ConversationHistory({
             disabled={chat.busy}
             onClick={() => {
               chat.cancelCreation();
-              if (!chat.contextBoxes.length) {
+              if (!chat.contextBoxes.length && !availableFile) {
                 setName("");
                 setEdit("save");
               }
             }}
           >
-            {chat.contextBoxes.length
+            {chat.contextBoxes.length || availableFile
               ? "Cancel"
               : "Create box from Active Context"}
           </button>
-          {!chat.contextBoxes.length && (
+          {!chat.contextBoxes.length && !availableFile && (
             <button onClick={chat.cancelCreation}>Cancel</button>
           )}
         </div>

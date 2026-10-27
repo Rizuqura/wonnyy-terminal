@@ -11,7 +11,7 @@ const { validateAnswer, answerPrefix } = require("./response-validation.cjs");
 const { DEFAULTS } = require("./model-registry.cjs");
 const { createDatasetSession } = require("./dataset-session.cjs");
 const { planDataset } = require("./dataset-planner.cjs");
-const { validateDatasetAnswer } = require("./dataset-evidence.cjs");
+const { inspectDatasetAnswer } = require("./dataset-evidence.cjs");
 const { planStatistics, wantsStatistics } = require("./statistics.cjs");
 
 const ANSWER_FORMAT = Object.freeze({
@@ -164,14 +164,51 @@ function createContextOrchestrator({
       const runId = options.runId ?? randomUUID();
       const settings = { ...DEFAULTS, ...options.settings };
       const diagnostics = {
+        ...(options.contextFile ? { contextFile: options.contextFile } : {}),
+        ...(options.agentKnowledge
+          ? { agentKnowledge: options.agentKnowledge }
+          : {}),
         ...(options.agentConfig
           ? {
               agent: {
                 id: options.agentConfig.id,
+                displayName: options.agentConfig.displayName,
+                configurationReferences: (
+                  options.agentConfig.configurationReferences ?? []
+                ).map(
+                  ({
+                    nodeId,
+                    role,
+                    boxId,
+                    boxName,
+                    relativePath,
+                    contextIdentity,
+                  }) => ({
+                    nodeId,
+                    role,
+                    boxId,
+                    boxName,
+                    ...(relativePath ? { relativePath } : {}),
+                    contextIdentity,
+                  }),
+                ),
+                constructionRevision:
+                  options.agentConfig.construction?.activeRevision ?? 0,
+                constructionHash: options.agentConfig.construction?.active
+                  ? require("node:crypto")
+                      .createHash("sha256")
+                      .update(
+                        JSON.stringify(options.agentConfig.construction.active),
+                      )
+                      .digest("hex")
+                  : null,
                 policyVersion: options.agentConfig.policyVersion,
                 customInstructionsHash: require("node:crypto")
                   .createHash("sha256")
-                  .update(options.agentConfig.customInstructions)
+                  .update(
+                    options.agentConfig.runtimeInstructions ??
+                      options.agentConfig.customInstructions,
+                  )
                   .digest("hex"),
               },
             }
@@ -441,8 +478,12 @@ function createContextOrchestrator({
           ),
         }));
         const preflight = promptBuilder({
-          customInstructions: options.agentConfig?.customInstructions,
+          customInstructions:
+            options.agentConfig?.runtimeInstructions ??
+            options.agentConfig?.customInstructions,
           agentId: options.agentConfig?.id,
+          agentName: options.agentConfig?.displayName,
+          configurationReferences: options.agentConfig?.configurationReferences,
           userMessage: request.userMessage,
           sources,
         });
@@ -559,8 +600,12 @@ function createContextOrchestrator({
           );
         }
         const base = promptBuilder({
-          customInstructions: options.agentConfig?.customInstructions,
+          customInstructions:
+            options.agentConfig?.runtimeInstructions ??
+            options.agentConfig?.customInstructions,
           agentId: options.agentConfig?.id,
+          agentName: options.agentConfig?.displayName,
+          configurationReferences: options.agentConfig?.configurationReferences,
           userMessage: request.userMessage,
           sources,
           statistics: diagnostics.statistics,
@@ -570,8 +615,12 @@ function createContextOrchestrator({
         diagnostics.droppedExchanges += options.earlierExchangesDropped ?? 0;
         diagnostics.includedExchanges = budget.history.length / 2;
         const prompt = promptBuilder({
-          customInstructions: options.agentConfig?.customInstructions,
+          customInstructions:
+            options.agentConfig?.runtimeInstructions ??
+            options.agentConfig?.customInstructions,
           agentId: options.agentConfig?.id,
+          agentName: options.agentConfig?.displayName,
+          configurationReferences: options.agentConfig?.configurationReferences,
           userMessage: request.userMessage,
           history: budget.history,
           sources,
@@ -631,32 +680,34 @@ function createContextOrchestrator({
           );
           diagnostics.citedSourceIds =
             JSON.parse(response.content).citations ?? [];
-          return diagnostics.datasetAnalysis || diagnostics.statistics
-            ? validateDatasetAnswer(
-                text,
-                [
-                  ...(diagnostics.datasetAnalysis?.results ?? []),
-                  ...(diagnostics.statistics?.results ?? []).map((result) => ({
-                    results: [
-                      {
-                        values: [
-                          ...result.inputs,
-                          result.value,
-                          result.formula,
-                        ],
-                      },
-                    ],
-                  })),
-                  ...(diagnostics.datasetHistory ?? []).flatMap(
-                    (entry) => entry.results,
-                  ),
-                ],
-                request.userMessage,
-                sources
-                  .filter((source) => source.type !== "csv")
-                  .map((source) => source.content),
-              )
-            : text;
+          if (diagnostics.datasetAnalysis || diagnostics.statistics) {
+            const validation = inspectDatasetAnswer(
+              text,
+              [
+                ...(diagnostics.datasetAnalysis?.results ?? []),
+                ...(diagnostics.statistics?.results ?? []).map((result) => ({
+                  results: [
+                    {
+                      values: [...result.inputs, result.value, result.formula],
+                    },
+                  ],
+                })),
+                ...(diagnostics.datasetHistory ?? []).flatMap(
+                  (entry) => entry.results,
+                ),
+              ],
+              request.userMessage,
+              sources
+                .filter((source) => source.type !== "csv")
+                .map((source) => source.content),
+            );
+            diagnostics.answerNumberValidation = {
+              policy: validation.policy,
+              calculations: validation.calculations,
+            };
+            return validation.answer;
+          }
+          return text;
         };
         try {
           answer = validate(response);
@@ -679,7 +730,7 @@ function createContextOrchestrator({
           options.onEvent?.({ state: "VALIDATING", content: "" });
           const correction =
             error.details.reason === "dataset_unsupported_number"
-              ? "The previous answer introduced quantities absent from the computed dataset results. Use only the supplied computed values, without estimating, inferring missing totals or inventing units. If the needed calculation was not performed, state that limitation."
+              ? `The previous answer contained unverified quantities or incorrect arithmetic. Unverified values: ${JSON.stringify(error.details.numbers ?? [])}. Unverified calculations: ${JSON.stringify(error.details.calculations ?? [])}. Use supplied evidence with accurate rounding or equivalent percentage notation. Additional basic arithmetic must be shown as a complete numeric equation using only supported inputs so the host can recompute it. Do not infer whole-dataset totals from samples, invent units or invent missing inputs. If the needed analysis is unavailable, state that limitation.`
               : error.details.reason === "repeated_answer"
                 ? "The previous attempt copied an earlier answer to a different question. Answer the LAST user message directly from the approved source. Follow its requested count and format. Supply the requested facts or deliverable, not the earlier general summary."
                 : "The previous response only repeated the task or described a plan. Produce the requested content itself now. Use concrete facts from the source and discussion. The answer must be the actual completed deliverable, not an instruction to create it.";
@@ -707,8 +758,13 @@ function createContextOrchestrator({
           diagnostics.includedExchanges = repairBudget.history.length / 2;
           const repairedMessages = withCorrection(
             promptBuilder({
-              customInstructions: options.agentConfig?.customInstructions,
+              customInstructions:
+                options.agentConfig?.runtimeInstructions ??
+                options.agentConfig?.customInstructions,
               agentId: options.agentConfig?.id,
+              agentName: options.agentConfig?.displayName,
+              configurationReferences:
+                options.agentConfig?.configurationReferences,
               userMessage: request.userMessage,
               history: repairBudget.history,
               sources,

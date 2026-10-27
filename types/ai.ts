@@ -143,6 +143,8 @@ export type ContextIdentity = {
   sources: ModelSourceReference[];
 };
 export type ChatMessage = {
+  contextFile?: { relativePath: string };
+  knowledgeBox?: { id: string; name: string };
   contextIdentity?: ContextIdentity;
   contextBox?: { id: string; name: string; revision: number };
   provider?: string;
@@ -191,8 +193,10 @@ export type ContextBoxEdit = {
   relativePath?: string;
 };
 export type Conversation = {
+  agentKnowledge?: ConstructionSourceBinding;
+  contextFile?: ConstructionFileBinding;
   agentId?: string;
-  schemaVersion: 1 | 2 | 3;
+  schemaVersion: 1 | 2 | 3 | 4;
   contextBoxId?: string;
   contextBoxRevision?: number;
   id: string;
@@ -203,15 +207,117 @@ export type Conversation = {
   messages: ChatMessage[];
   attempts: ChatAttempt[];
 };
+export type AgentNodeKind =
+  | "Context"
+  | "Personality"
+  | "Skill"
+  | "LLM"
+  | "Workflow"
+  | "Knowledge"
+  | "Output";
+export type ConstructionBoxBinding = {
+  vaultPath: string;
+  boxId: string;
+  boxName: string;
+  boxRevision: number;
+  reviewedAt: string;
+  estimatedTokens: number;
+  contextIdentity: ContextIdentity;
+};
+export type ConstructionBoxPreview = {
+  binding: ConstructionBoxBinding;
+  sources: {
+    sourceId: string;
+    relativePath: string;
+    contentHash: string;
+    content: string;
+  }[];
+  chars: number;
+};
+export type ConstructionFileBinding = Omit<
+  ConstructionBoxBinding,
+  "boxId" | "boxName" | "boxRevision"
+> & { relativePath: string };
+export type ConstructionSourceBinding =
+  ConstructionBoxBinding | ConstructionFileBinding;
+export type ConstructionFilePreview = Omit<
+  ConstructionBoxPreview,
+  "binding"
+> & { binding: ConstructionFileBinding };
+export type AgentConstructionConfig = {
+  displayName: string;
+  description: string;
+  personality: string;
+  instructions: string;
+  nodes: {
+    id: string;
+    kind: AgentNodeKind;
+    x: number;
+    y: number;
+    config: {
+      maxTokens?: number;
+      instructions?: string;
+      contextBox?: ConstructionBoxBinding;
+      contextFile?: ConstructionFileBinding;
+      providerId?: ModelSettings["providerId"];
+      modelId?: string;
+      skillId?: "knowledge-consolidation";
+      mode?: "bound-only" | "single-pass" | "preview-only" | "text";
+    };
+  }[];
+  edges: { from: string; to: string }[];
+};
+export type AgentConstructionInput = {
+  id: string;
+  action: "draft" | "apply";
+  expectedRevision: number;
+  config: AgentConstructionConfig;
+  avatarDataUrl?: string | null;
+  bannerDataUrl?: string | null;
+  wallpaperDataUrl?: string | null;
+  appearance?: AgentAppearanceOptions;
+};
+export type AgentAppearanceOptions = {
+  wallpaperMode: "none" | "dots" | "image";
+  dim: number;
+  fontSize: 14 | 15 | 16 | 18;
+};
+export type AgentAppearance = AgentAppearanceOptions & {
+  banner: { type: "local-asset"; assetId: string } | null;
+  wallpaper: { type: "local-asset"; assetId: string } | null;
+  bannerUrl: string | null;
+  wallpaperUrl: string | null;
+};
 export type AgentConfig = {
   id: string;
   displayName: string;
   avatar:
-    | { type: "letter"; letter: "W" | "C" }
+    | { type: "letter"; letter: string }
     | { type: "local-asset"; assetId: string };
   avatarUrl: string | null;
+  appearance: AgentAppearance;
   customInstructions: string;
+  description: string;
+  personality: string;
+  runtimeInstructions: string;
+  runtimeModel: { providerId?: ModelSettings["providerId"]; modelId?: string };
+  construction: {
+    revision: number;
+    draftRevision: number;
+    activeRevision: number;
+    draft: AgentConstructionConfig;
+    active: AgentConstructionConfig | null;
+    draftAvatar: AgentConfig["avatar"];
+    draftAvatarUrl: string | null;
+    draftAppearance: AgentAppearance;
+    log: {
+      revision: number;
+      action: "draft" | "apply" | "profile";
+      at: string;
+    }[];
+  };
   skills: string[];
+  availableSkills: string[];
   protectedInstructions: string;
   policyVersion: string;
   mode: "strict-context-analysis";
@@ -346,6 +452,7 @@ export interface OpenRouterUsageSnapshot {
   remainingUsd: number | null;
   usedUsdThisPeriod: number | null;
   resetCadence: "daily" | "weekly" | "monthly" | "none" | "unknown";
+  resetAt?: string | null;
   accountCreditsRemainingUsd: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -355,6 +462,28 @@ export interface OpenRouterUsageSnapshot {
   errorMessage?: string;
 }
 export interface AiBridge {
+  listConstructionFiles?(): Promise<string[]>;
+  previewConstructionFile?(input: {
+    relativePath: string;
+  }): Promise<ConstructionFilePreview>;
+  getVaultIdentity?(): Promise<{ vaultPath: string }>;
+  previewConstructionBox?(input: {
+    boxId: string;
+  }): Promise<ConstructionBoxPreview>;
+  listAgents?(): Promise<AgentConfig[]>;
+  createAgent?(input: {
+    name: string;
+    creationId: string;
+  }): Promise<AgentConfig>;
+  saveAgentConstruction?(input: AgentConstructionInput): Promise<AgentConfig>;
+  proposeKnowledge?(input: {
+    runId: string;
+    extraction: unknown;
+  }): Promise<unknown>;
+  retrieveKnowledge?(input: {
+    conversationId: string;
+    query: { entity: string; topic: string; period: string; maxTokens: number };
+  }): Promise<unknown>;
   openRouterUsage(input?: {
     refresh?: boolean;
   }): Promise<OpenRouterUsageSnapshot>;
@@ -366,6 +495,7 @@ export interface AiBridge {
     avatarDataUrl?: string | null;
   }): Promise<AgentConfig>;
   chooseAgentAvatar(): Promise<string | null>;
+  chooseAgentBackdrop?(kind: "banner" | "wallpaper"): Promise<string | null>;
   previewBoxSelection(
     paths: string[],
   ): Promise<{ files: string[]; skipped: string[] }>;
@@ -412,8 +542,10 @@ export interface AiBridge {
   context(input: ScopeSelection): Promise<ContextIdentity>;
   listConversations(): Promise<Conversation[]>;
   createConversation(input: {
+    includeAgentKnowledge?: boolean;
     agentId?: string;
-    contextBoxId: string;
+    contextBoxId?: string;
+    contextFile?: ConstructionFileBinding;
     creationId: string;
   }): Promise<Conversation>;
   renameConversation(input: {

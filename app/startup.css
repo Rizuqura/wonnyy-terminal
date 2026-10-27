@@ -4,78 +4,139 @@
   z-index: 10000;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: #0d1117;
-  color: #dce7ef;
+  padding: clamp(24px, 5vh, 64px) clamp(24px, 8vw, 120px);
+  overflow: auto;
+  background-color: #03060c;
+  background-image:
+    linear-gradient(90deg, #0009 0%, #0005 52%, #0004 100%),
+    linear-gradient(0deg, #0009 0%, transparent 48%, #0002 100%),
+    url("../public/startup-space.svg");
+  background-position: center;
+  background-size: cover;
+  color: #e5edf8;
   font-family: "Segoe UI", sans-serif;
 }
 .startup-card {
-  width: min(360px, 100%);
+  width: min(960px, 100%);
+  margin-block: auto;
 }
 .startup-brand {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  margin-bottom: 20px;
+  display: block;
+  width: clamp(72px, 14vh, 128px);
+  height: clamp(72px, 14vh, 128px);
+  margin-bottom: clamp(16px, 3vh, 32px);
   object-fit: contain;
 }
 .startup-card h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: clamp(36px, 4.4vw, 64px);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
   font-weight: 600;
 }
-.startup-card p {
-  margin: 24px 0 12px;
-  font-size: 13px;
-}
 .startup-card .startup-version {
-  margin: 6px 0 36px;
-  color: #8b9eae;
+  margin: 16px 0 clamp(28px, 5.5vh, 56px);
+  color: #91aacb;
+  font-size: clamp(12px, 1.5vw, 20px);
+  letter-spacing: 0.22em;
+}
+.startup-stage {
+  margin: 0 0 20px;
+  font-size: clamp(18px, 2vw, 28px);
+  line-height: 1.4;
 }
 .startup-card progress {
   display: block;
   width: 100%;
-  height: 6px;
+  height: 9px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
   appearance: none;
-  background: #1b2933;
-  accent-color: #9bd5c2;
+  background: #263447;
+  accent-color: #71d9e0;
+  box-shadow: 0 0 16px #35c9da18;
 }
 .startup-card progress::-webkit-progress-bar {
-  background: #1b2933;
+  background: #263447;
 }
 .startup-card progress::-webkit-progress-value {
-  background: #9bd5c2;
-  border-radius: 6px;
+  background: linear-gradient(90deg, #24bcc8, #a1eced);
+  border-radius: 8px;
 }
 .startup-caption {
   display: flex;
   justify-content: space-between;
-  margin-top: 10px;
-  color: #8b9eae;
-  font-size: 11px;
+  gap: 16px;
+  margin-top: 16px;
+  color: #a0b6d3;
+  font-size: clamp(12px, 1.5vw, 20px);
+  font-variant-numeric: tabular-nums;
 }
-.startup-card .startup-error {
+.startup-error {
   color: #efb4a6;
   overflow-wrap: anywhere;
+  line-height: 1.5;
+  margin: 20px 0 0;
 }
 .startup-card button {
-  margin-top: 28px;
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: min(480px, 100%);
+  margin-top: clamp(28px, 6vh, 60px);
+  padding: 12px 20px;
   border: 0;
-  border-radius: 8px;
-  background: #18252e;
-  color: #b8c9d6;
+  border-radius: 18px;
+  background: linear-gradient(120deg, #17394aee, #0d1c2fe8);
+  color: #e2edfb;
+  box-shadow:
+    0 8px 30px #0005,
+    inset 0 1px 12px #5ccdde18;
+  font: inherit;
+  font-size: clamp(16px, 1.8vw, 26px);
   cursor: pointer;
 }
+.startup-continue-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #4eb1ca12;
+  color: #87ddeb;
+  font-size: 32px;
+}
 .startup-card button:hover {
-  background: #20323d;
-  box-shadow: 0 4px 14px #0003;
+  background: linear-gradient(120deg, #20495bee, #142a40ed);
+  box-shadow:
+    0 10px 36px #0007,
+    0 0 24px #57ccdc12;
 }
 .startup-card button:focus-visible {
-  outline: 2px solid #9bd5c2;
-  outline-offset: 4px;
+  outline: 2px solid #9bdde2;
+  outline-offset: 5px;
+}
+@media (max-width: 600px) {
+  .startup-screen {
+    background-position: 65% center;
+  }
+  .startup-card button {
+    gap: 16px;
+    padding: 10px 16px;
+  }
+}
+@media (max-height: 560px) {
+  .startup-brand {
+    width: 56px;
+    height: 56px;
+    margin-bottom: 12px;
+  }
+  .startup-card .startup-version {
+    margin: 8px 0 20px;
+  }
+  .startup-card button {
+    margin-top: 20px;
+  }
 }

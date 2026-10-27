@@ -53,7 +53,10 @@ async function main() {
                 },
               ],
             }
-          : { answer: "Total revenue is 20,007 from 20,000 rows." },
+          : {
+              answer:
+                "Total revenue is 20,007 from 20,000 rows. Per-row mean: 20007 / 20000 = 1.00035 (about 1.0004).",
+            },
       );
       res.setHeader("Content-Type", "application/x-ndjson");
       res.end(
@@ -101,8 +104,13 @@ async function main() {
       await desktop.ai.settings({ modelId: "qwen3:4b" });
       await desktop.context.add(["sales.csv"]);
       const scope = { activeStationIds: [], matchMode: "any" };
-      const box = await desktop.ai.saveContextBox({name: "Dataset acceptance"});
-      const chat = await desktop.ai.createConversation({contextBoxId:box.id,creationId:crypto.randomUUID()});
+      const box = await desktop.ai.saveContextBox({
+        name: "Dataset acceptance",
+      });
+      const chat = await desktop.ai.createConversation({
+        contextBoxId: box.id,
+        creationId: crypto.randomUUID(),
+      });
       return desktop.ai.chat({
         ...scope,
         conversationId: chat.id,
@@ -121,6 +129,14 @@ async function main() {
       20007,
     );
     assert.equal(requests.length, 2);
+    assert.equal(
+      result.run.diagnostics.answerNumberValidation.policy,
+      "numeric-evidence-v2",
+    );
+    assert.equal(
+      result.run.diagnostics.answerNumberValidation.calculations[0].value,
+      20007 / 20000,
+    );
     assert.ok(JSON.stringify(requests[0]).length < 20000);
     await fs.mkdir("test-results", { recursive: true });
     await fs.writeFile(
@@ -130,6 +146,8 @@ async function main() {
           passed: true,
           answer: result.run.response,
           analysis: result.run.diagnostics.datasetAnalysis,
+          numberValidation: result.run.diagnostics.answerNumberValidation,
+          transport: "synthetic",
         },
         null,
         2,

@@ -26,9 +26,7 @@ export function AgentAvatar({
         <span aria-hidden="true">
           {agent?.avatar.type === "letter"
             ? agent.avatar.letter
-            : agent?.id === "chronoz"
-              ? "C"
-              : "W"}
+            : (agent?.displayName.toUpperCase().match(/[A-Z0-9]/)?.[0] ?? "A")}
         </span>
       )}
     </span>

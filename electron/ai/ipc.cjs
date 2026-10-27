@@ -22,6 +22,8 @@ function registerAiIpc({
   credentials,
   agents,
   chooseAvatar,
+  chooseBackdrop,
+  researchKnowledge,
 }) {
   const compatible = new Set();
   const checks = new Map();
@@ -103,8 +105,40 @@ function registerAiIpc({
   );
   handle("models", () => registry.state());
   handle("getAgent", (_, id) => agents.get(id));
+  handle("listAgents", () => agents.list());
+  handle("createAgent", (_, input) =>
+    service.exclusive(() => agents.create(input)),
+  );
+  handle("getVaultIdentity", async () => ({
+    vaultPath: (await service.store(getVault())).root,
+  }));
+  handle("saveAgentConstruction", (_, input) =>
+    service.saveConstruction(getVault(), input),
+  );
+  handle("previewConstructionBox", (_, input) =>
+    service.exclusive(() => service.previewConstructionBox(getVault(), input)),
+  );
+  handle("listConstructionFiles", () =>
+    service.exclusive(() => service.listConstructionFiles(getVault())),
+  );
+  handle("previewConstructionFile", (_, input) =>
+    service.exclusive(() => service.previewConstructionFile(getVault(), input)),
+  );
+  if (researchKnowledge) {
+    handle("proposeKnowledge", (_, input) =>
+      service.exclusive(() => researchKnowledge.propose(getVault(), input)),
+    );
+    handle("retrieveKnowledge", (_, input) =>
+      service.exclusive(() =>
+        researchKnowledge.retrieve(getVault(), input, service),
+      ),
+    );
+  }
   handle("saveAgent", (_, input) => agents.save(input));
   handle("chooseAgentAvatar", () => chooseAvatar());
+  handle("chooseAgentBackdrop", (_, kind) =>
+    chooseBackdrop(parse(z.enum(["banner", "wallpaper"]), kind)),
+  );
   handle("checkRemoteModel", (event, input) => {
     const { providerId, model } = parse(
       z

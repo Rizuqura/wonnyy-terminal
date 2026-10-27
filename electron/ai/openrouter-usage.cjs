@@ -8,6 +8,7 @@ const blank = (status = "unconfigured") => ({
   remainingUsd: null,
   usedUsdThisPeriod: null,
   resetCadence: "unknown",
+  resetAt: null,
   accountCreditsRemainingUsd: null,
   inputTokens: null,
   outputTokens: null,
@@ -23,6 +24,22 @@ const amount = (value) =>
       : (() => {
           throw new Error("Invalid amount");
         })();
+// OpenRouter key spend windows use UTC calendar boundaries, not elapsed time.
+function nextReset(cadence, now) {
+  const date = new Date(now);
+  const year = date.getUTCFullYear(),
+    month = date.getUTCMonth(),
+    day = date.getUTCDate();
+  if (cadence === "daily")
+    return new Date(Date.UTC(year, month, day + 1)).toISOString();
+  if (cadence === "weekly")
+    return new Date(
+      Date.UTC(year, month, day + (7 - ((date.getUTCDay() + 6) % 7))),
+    ).toISOString();
+  if (cadence === "monthly")
+    return new Date(Date.UTC(year, month + 1, 1)).toISOString();
+  return null;
+}
 function normalize(data, alias, now) {
   if (
     !data ||
@@ -49,6 +66,7 @@ function normalize(data, alias, now) {
     remainingUsd: remaining,
     usedUsdThisPeriod: amount(data[period]),
     resetCadence: cadence,
+    resetAt: limit === null ? null : nextReset(cadence, now),
     dataSource: "current_key",
     fetchedAt: new Date(now).toISOString(),
   };
@@ -148,6 +166,8 @@ class OpenRouterUsageService {
       (this.now() < this.nextAt ||
         (!refresh &&
           this.cached.status === "ready" &&
+          (!this.cached.resetAt ||
+            this.now() < Date.parse(this.cached.resetAt)) &&
           this.now() - Date.parse(this.cached.fetchedAt) < 60000))
     )
       return this.withTokens(this.cached);

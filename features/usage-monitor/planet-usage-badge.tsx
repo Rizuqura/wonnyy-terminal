@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { OpenRouterUsageSnapshot } from "../../types/ai";
 import { connectAi } from "../chat/desktop-client";
-import { usageView } from "./usage-view";
+import { resetView, usageView } from "./usage-view";
 import "./usage-monitor.css";
 
 const money = (n: number | null) =>
@@ -36,7 +36,34 @@ export function PlanetUsageBadge({
   const [expanded, setExpanded] = useState(false),
     [busy, setBusy] = useState(true),
     [error, setError] = useState("");
+  const [now, setNow] = useState(() => Date.now());
+  const refreshedReset = useRef<string | null>(null);
   const refresh = useRef<(manual?: boolean) => void>(() => {});
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible" && document.hasFocus())
+        setNow(Date.now());
+    };
+    const timer = setInterval(tick, 1000);
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, []);
+  const reset = resetView(snapshot, now);
+  useEffect(() => {
+    if (
+      reset.expired &&
+      snapshot?.resetAt &&
+      refreshedReset.current !== snapshot.resetAt
+    ) {
+      refreshedReset.current = snapshot.resetAt;
+      refresh.current(true);
+    }
+  }, [reset.expired, snapshot?.resetAt]);
   useEffect(() => {
     try {
       setExpanded(
@@ -115,7 +142,7 @@ export function PlanetUsageBadge({
       document.removeEventListener("visibilitychange", wake);
     };
   }, []);
-  const { staleByTime, ready, ratio, tone } = usageView(snapshot, Date.now());
+  const { staleByTime, ready, ratio, tone } = usageView(snapshot, now);
   const status = staleByTime
     ? "Stale"
     : snapshot
@@ -179,6 +206,18 @@ export function PlanetUsageBadge({
           <span style={{ width: `${ratio * 100}%` }} />
         </div>
       )}
+      <div
+        className="usage-reset"
+        aria-label="Credit reset timer"
+        title={
+          snapshot?.resetAt
+            ? `Key allowance reset: ${new Date(snapshot.resetAt).toLocaleString()}. Model availability also depends on account credits and provider limits.`
+            : "The provider has not supplied a scheduled key allowance reset."
+        }
+      >
+        {reset.label}
+        {staleByTime || snapshot?.status === "stale" ? " · last known" : ""}
+      </div>
       {expanded && (
         <div id="openrouter-usage-detail" className="usage-detail">
           <p>{snapshot?.safeKeyAlias ?? "Connected key unavailable"}</p>

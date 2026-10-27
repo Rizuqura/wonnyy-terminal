@@ -6,6 +6,7 @@ import "../features/dialogs/confirmation.css";
 import "./victoria.css";
 import "./soft-surfaces.css";
 import "./startup.css";
+import "../features/chat/chat-presentation.css";
 
 export const metadata: Metadata = {
   title: "QTerminal",

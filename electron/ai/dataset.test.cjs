@@ -55,7 +55,7 @@ test("percentage explanations may use the engine's declared formula constant", (
         [{ results: [{ values: [7] }] }],
         "Total?",
       ),
-    /introduced numbers/,
+    /Could not verify/,
   );
 });
 
@@ -525,6 +525,104 @@ test("model plans and receives full-dataset evidence beyond the raw prompt limit
     15000,
   );
   assert.equal(f.records[0].status, "succeeded");
+});
+
+test("explicit secondary arithmetic reaches the saved answer with local verification provenance", async () => {
+  let calls = 0;
+  const f = integration(
+    {
+      complete: async (request) => {
+        calls++;
+        if (request.format.properties.queries)
+          return {
+            content: JSON.stringify({
+              queries: [
+                {
+                  sourceId: "sales.csv",
+                  operation: "aggregate",
+                  metrics: [{ op: "sum", column: "revenue", as: "total" }],
+                },
+              ],
+            }),
+            finishReason: "stop",
+          };
+        return {
+          content: JSON.stringify({
+            answer: "Average per record: 40 / 2 = 20.",
+          }),
+          finishReason: "stop",
+          model: "test",
+        };
+      },
+    },
+    "revenue\n25\n15",
+  );
+  const result = await f.run({
+    conversationId: "numeric-test",
+    requestId: "numeric-request",
+  });
+  assert.equal(calls, 2);
+  assert.match(result.content, /40 \/ 2 = 20/);
+  assert.equal(
+    result.diagnostics.answerNumberValidation.policy,
+    "numeric-evidence-v2",
+  );
+  assert.deepEqual(
+    result.diagnostics.answerNumberValidation.calculations[0].inputs,
+    [40, 2],
+  );
+  assert.equal(
+    result.diagnostics.answerNumberValidation.calculations[0].value,
+    20,
+  );
+  assert.equal(f.records[0].status, "succeeded");
+  assert.equal(
+    f.records[0].diagnostics.answerNumberValidation.calculations[0].value,
+    20,
+  );
+});
+
+test("incorrect secondary arithmetic gets one bounded correction without publishing the rejected answer", async () => {
+  let answers = 0;
+  const events = [];
+  const f = integration(
+    {
+      complete: async (request) => {
+        if (request.format.properties.queries)
+          return {
+            content: JSON.stringify({
+              queries: [
+                {
+                  sourceId: "sales.csv",
+                  operation: "aggregate",
+                  metrics: [{ op: "sum", column: "revenue", as: "total" }],
+                },
+              ],
+            }),
+            finishReason: "stop",
+          };
+        answers++;
+        const answer = answers === 1 ? "40 / 2 = 999." : "40 / 2 = 20.";
+        request.onContent?.(JSON.stringify({ answer }));
+        return {
+          content: JSON.stringify({ answer }),
+          finishReason: "stop",
+          model: "test",
+        };
+      },
+    },
+    "revenue\n25\n15",
+  );
+  const result = await f.run({ onEvent: (event) => events.push(event) });
+  assert.equal(answers, 2);
+  assert.equal(result.diagnostics.validationRepairCount, 1);
+  assert.equal(
+    result.diagnostics.answerNumberValidation.calculations[0].value,
+    20,
+  );
+  assert.equal(f.records[0].status, "succeeded");
+  assert.ok(events.every((event) => !event.content?.includes("999")));
+  assert.doesNotMatch(f.records[0].response, /999/);
 });
 
 test("unsupported dataset numbers never stream or become a successful saved answer", async () => {

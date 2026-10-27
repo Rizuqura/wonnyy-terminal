@@ -1,0 +1,163 @@
+.app-shell .chat-thread {
+  gap: 18px;
+  padding: 22px 20px;
+  background-color: #0d141c;
+}
+.app-shell .chat-thread .chat-message {
+  flex-shrink: 0;
+  font-family: var(--ui-font, "Segoe UI", sans-serif);
+  font-size: var(--chat-reading-size, 15px);
+  line-height: 1.7;
+  font-weight: 400;
+  border: 0;
+  overflow-wrap: anywhere;
+  box-shadow: 0 3px 14px #0002;
+}
+.app-shell .chat-thread .chat-message-assistant {
+  width: fit-content;
+  min-width: min(240px, 100%);
+  max-width: min(78ch, 100%);
+  padding: 16px 18px;
+  border-radius: 16px 16px 16px 5px;
+  background: #17232ef5;
+  color: #dfe8f2;
+}
+.app-shell .chat-thread .chat-message-user {
+  width: fit-content;
+  max-width: min(62ch, 88%);
+  padding: 12px 16px;
+  border-radius: 16px 16px 5px 16px;
+  background: #253f49f5;
+  color: #ebf4f5;
+  margin-left: auto;
+}
+.app-shell .chat-thread .chat-message-meta {
+  margin-bottom: 12px;
+}
+.app-shell .chat-thread .chat-rich-text p {
+  margin: 0 0 0.85em;
+  white-space: pre-line;
+}
+.app-shell .chat-thread .chat-rich-text > :last-child {
+  margin-bottom: 0;
+}
+.chat-rich-text strong {
+  font-weight: 700;
+  color: #f3f7fc;
+}
+.chat-rich-text em {
+  font-style: italic;
+}
+.chat-rich-text :is(h3, h4, h5, h6) {
+  font-weight: 650;
+  line-height: 1.4;
+  margin: 1.2em 0 0.5em;
+  color: #eef4fc;
+}
+.chat-rich-text h3 {
+  font-size: 1.18em;
+}
+.chat-rich-text :is(h4, h5, h6) {
+  font-size: 1.06em;
+}
+.chat-rich-text > :first-child {
+  margin-top: 0;
+}
+.chat-rich-text :is(ul, ol) {
+  padding-left: 1.5em;
+  margin: 0.6em 0 1em;
+}
+.chat-rich-text ul {
+  list-style: disc;
+}
+.chat-rich-text ol {
+  list-style: decimal;
+}
+.chat-rich-text li {
+  padding-left: 0.2em;
+  margin: 0.35em 0;
+  white-space: pre-line;
+}
+.chat-rich-text blockquote {
+  margin: 1em 0;
+  padding: 8px 14px;
+  background: #23333e;
+  border-radius: 8px;
+  color: #bacdd9;
+  white-space: pre-line;
+}
+.chat-rich-text code {
+  font:
+    0.88em/1.6 "Cascadia Code",
+    Consolas,
+    monospace;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #0c1720;
+  color: #c3e3d8;
+  white-space: pre-wrap;
+}
+.chat-rich-text pre {
+  margin: 1em 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: #0c151f;
+  overflow: auto;
+  max-width: 100%;
+}
+.chat-rich-text pre code {
+  padding: 0;
+  background: none;
+  white-space: pre;
+  font-size: 0.85em;
+}
+.chat-rich-text a {
+  color: #a8d8e8;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.chat-rich-text hr {
+  height: 1px;
+  background: #344653;
+  border: 0;
+  margin: 1.1em 0;
+}
+.chat-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.chat-rich-text table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  text-align: left;
+}
+.chat-rich-text :is(th, td) {
+  padding: 9px 12px;
+  vertical-align: top;
+}
+.chat-rich-text th {
+  background: #293b47;
+  font-weight: 650;
+}
+.chat-rich-text tbody tr:nth-child(even) {
+  background: #20303a;
+}
+.app-shell .chat-thread .chat-source-evidence {
+  margin-top: 12px;
+  padding-top: 10px;
+  font-size: 0.85em;
+  color: #9db4c4;
+}
+.app-shell .chat-thread .chat-source-evidence p {
+  white-space: pre-wrap;
+}
+@media (max-width: 700px) {
+  .app-shell .chat-thread {
+    padding: 14px 12px;
+  }
+  .app-shell .chat-thread .chat-message-assistant {
+    padding: 14px;
+  }
+}

@@ -964,8 +964,8 @@ export function AppShell() {
             )?.name
           }
           agentModel={
-            chat.registry?.settings.modelId
-              ? `${chat.registry.settings.providerId} / ${chat.registry.settings.modelId}`
+            chat.effectiveSettings?.modelId
+              ? `${chat.effectiveSettings!.providerId} / ${chat.effectiveSettings!.modelId}`
               : undefined
           }
           view={view}
