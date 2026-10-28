@@ -71,6 +71,31 @@ async function main() {
       name: "Agent Construction Studio",
     });
     assert.equal(await studio.locator(".studio-node").count(), 4);
+    await fs.mkdir("test-results", { recursive: true });
+    for (const width of [1440, 1024, 680]) {
+      await page.setViewportSize({ width, height: 1200 });
+      const layout = await studio
+        .locator(".studio-workbench")
+        .evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
+      assert.ok(
+        layout.scroll <= layout.width + 1,
+        JSON.stringify({ width, layout }),
+      );
+      const dimensions = await studio
+        .locator(".studio-bubble")
+        .first()
+        .evaluate((el) => ({
+          radius: getComputedStyle(el).borderRadius,
+          animation: getComputedStyle(el).animationName,
+        }));
+      assert.equal(dimensions.radius, "0px");
+      assert.equal(dimensions.animation, "none");
+    }
+    await page.setViewportSize({ width: 1440, height: 1400 });
+    await studio
+      .locator(".studio-workbench")
+      .screenshot({ path: "test-results/agent-workbench.png" });
+    await page.setViewportSize({ width: 1440, height: 900 });
     await studio
       .getByRole("textbox", { name: "Agent description", exact: true })
       .fill("Unsaved close test");
@@ -151,7 +176,13 @@ async function main() {
     await page.mouse.down();
     await page.mouse.move(body.x + 82, body.y + 41, { steps: 4 });
     await page.mouse.up();
-    assert.equal(await ctx.evaluate((el) => parseFloat(el.style.left)), x + 48);
+    const canvasScale = await studio
+      .locator(".studio-canvas")
+      .evaluate((el) => Number(el.dataset.canvasScale));
+    assert.equal(
+      await ctx.evaluate((el) => parseFloat(el.style.left)),
+      Math.round((x + 16 + 32 / canvasScale) / 8) * 8,
+    );
     await studio
       .getByRole("button", { name: "Add Personality", exact: true })
       .dragTo(studio.locator(".studio-canvas"), {
@@ -189,15 +220,24 @@ async function main() {
       .boundingBox();
     assert.equal(
       await page.evaluate(
-        ({ x, y }) =>
-          document.elementFromPoint(x + 10, y + 10)?.getAttribute("aria-label"),
+        ({ x, y, width, height }) =>
+          document
+            .elementFromPoint(x + width / 2, y + height / 2)
+            ?.getAttribute("aria-label"),
         outlet,
       ),
       "Connect from Personality",
     );
-    await page.mouse.move(outlet.x + 10, outlet.y + 10);
+    await page.mouse.move(
+      outlet.x + outlet.width / 2,
+      outlet.y + outlet.height / 2,
+    );
     await page.mouse.down();
-    await page.mouse.move(inlet.x + 10, inlet.y + 10, { steps: 6 });
+    await page.mouse.move(
+      inlet.x + inlet.width / 2,
+      inlet.y + inlet.height / 2,
+      { steps: 6 },
+    );
     await page.mouse.up();
     await page.waitForFunction(
       () =>

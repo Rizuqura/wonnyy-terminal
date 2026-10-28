@@ -591,6 +591,7 @@ export function ChatPanel({
         {transcript.map(({ message, modelChanged, attempt }) => (
           <article
             key={message.id}
+            data-message-id={message.id}
             className={`chat-message chat-message-${message.role}`}
           >
             {modelChanged && (
@@ -695,6 +696,38 @@ export function ChatPanel({
                   Create knowledge proposal
                 </button>
               )}
+            <details
+              className="chat-message-actions"
+              name="chat-message-options"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.currentTarget.open = false;
+                  event.currentTarget.querySelector("summary")?.focus();
+                }
+              }}
+            >
+              <summary
+                aria-label={`Message options for ${message.role === "user" ? "your message" : "agent response"}`}
+                title="Message options"
+              >
+                ⋯
+              </summary>
+              <button
+                type="button"
+                disabled={chat.busy}
+                onClick={(event) => {
+                  event.currentTarget
+                    .closest("details")
+                    ?.removeAttribute("open");
+                  chat.deleteMessage(message.id);
+                }}
+              >
+                {message.role === "user"
+                  ? "Delete message and replies"
+                  : "Delete message"}
+              </button>
+            </details>
           </article>
         ))}
         {chat.runtime.requestId && (
@@ -780,7 +813,11 @@ export function ChatPanel({
             event.preventDefault();
             if (!chat.busy) event.currentTarget.form?.requestSubmit();
           }}
-          placeholder="Ask about the attached Context Box…"
+          placeholder={
+            chat.retryOnSubmit
+              ? "Press Enter to retry the last message…"
+              : "Ask about the attached Context Box…"
+          }
           aria-label="Chat question"
         />
         {chat.runtime.requestId ? (
@@ -797,7 +834,10 @@ export function ChatPanel({
           <button
             type="submit"
             disabled={
-              chat.busy || !!pulling || !chat.canSend || !chat.draft.trim()
+              chat.busy ||
+              !!pulling ||
+              !chat.canSend ||
+              (!chat.draft.trim() && !chat.retryOnSubmit)
             }
             aria-label="Send message"
           >

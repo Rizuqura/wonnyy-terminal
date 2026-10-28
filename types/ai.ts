@@ -553,6 +553,10 @@ export interface AiBridge {
     title: string;
   }): Promise<Conversation>;
   deleteConversation(id: string): Promise<void>;
+  deleteMessage?(input: {
+    conversationId: string;
+    messageId: string;
+  }): Promise<Conversation>;
   clearConversations(): Promise<void>;
   resumeConversation(id: string): Promise<Conversation>;
   refreshSource(): Promise<unknown>;

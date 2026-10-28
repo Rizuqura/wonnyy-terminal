@@ -1157,6 +1157,106 @@ async function fixture(t) {
   return { root, calls, provider, registry, service, conversation, input };
 }
 
+test("resubmitting the latest failed prompt reuses its user message across repeated errors and recovery", async (t) => {
+  const f = await fixture(t);
+  const complete = f.provider.complete;
+  f.provider.complete = async () => {
+    throw new ModelRuntimeError("MODEL_OFFLINE", "Synthetic failure");
+  };
+  for (let i = 0; i < 3; i++)
+    await assert.rejects(f.service.run(f.root, 1, f.input()), {
+      code: "MODEL_OFFLINE",
+    });
+  let chat = (await f.service.list(f.root))[0];
+  assert.equal(chat.messages.length, 1);
+  assert.equal(new Set(chat.attempts.map((a) => a.userMessageId)).size, 1);
+  assert.equal(chat.attempts.length, 3);
+  f.provider.complete = complete;
+  const result = await f.service.run(f.root, 1, f.input());
+  assert.equal(result.conversation.messages.length, 2);
+  assert.equal(result.conversation.attempts.length, 4);
+  // The same text after success is a new, intentionally submitted turn.
+  assert.equal(
+    (await f.service.run(f.root, 1, f.input())).conversation.messages.length,
+    4,
+  );
+});
+
+test("deleting answers or whole turns persists without rewriting immutable runs or other turns", async (t) => {
+  const f = await fixture(t);
+  const first = await f.service.run(f.root, 1, f.input());
+  const second = await f.service.run(
+    f.root,
+    1,
+    f.input(undefined, { userMessage: "Another question." }),
+  );
+  const record = await readModelRun(f.root, first.run.runId);
+  let chat = await f.service.deleteMessage(f.root, {
+    conversationId: first.conversation.id,
+    messageId: first.conversation.messages[1].id,
+  });
+  assert.equal(chat.messages.length, 3);
+  assert.equal(chat.attempts.length, 2);
+  const restarted = new ChatService({
+    provider: f.provider,
+    registry: f.registry,
+  });
+  chat = (await restarted.list(f.root))[0];
+  assert.equal(chat.messages.length, 3);
+  chat = await restarted.deleteMessage(f.root, {
+    conversationId: chat.id,
+    messageId: second.conversation.messages[2].id,
+  });
+  assert.equal(chat.messages.length, 1);
+  assert.equal(chat.attempts.length, 1);
+  assert.deepEqual(await readModelRun(f.root, first.run.runId), record);
+  assert.equal(
+    (await readModelRun(f.root, second.run.runId)).status,
+    "succeeded",
+  );
+  // Repeated deletion is harmless, and the final prompt can also be removed.
+  await restarted.deleteMessage(f.root, {
+    conversationId: chat.id,
+    messageId: second.conversation.messages[2].id,
+  });
+  chat = await restarted.deleteMessage(f.root, {
+    conversationId: chat.id,
+    messageId: chat.messages[0].id,
+  });
+  assert.deepEqual(chat.messages, []);
+  assert.deepEqual(chat.attempts, []);
+  await assert.rejects(
+    restarted.deleteMessage(f.root, {
+      conversationId: "../escape",
+      messageId: "invalid",
+    }),
+    { code: "MODEL_INVALID_REQUEST" },
+  );
+});
+
+test("edited prompts after failures create independent turns and failed turns can be deleted", async (t) => {
+  const f = await fixture(t);
+  f.provider.complete = async () => {
+    throw new ModelRuntimeError("MODEL_OFFLINE", "Synthetic failure");
+  };
+  await assert.rejects(f.service.run(f.root, 1, f.input()));
+  await assert.rejects(
+    f.service.run(
+      f.root,
+      1,
+      f.input(undefined, { userMessage: "A different question." }),
+    ),
+  );
+  const before = (await f.service.list(f.root))[0];
+  assert.equal(before.messages.length, 2);
+  const after = await f.service.deleteMessage(f.root, {
+    conversationId: before.id,
+    messageId: before.messages[1].id,
+  });
+  assert.equal(after.messages.length, 1);
+  assert.equal(after.attempts.length, 1);
+});
+
 test("backend owns ten-turn history, model switching, duplicate delivery, and source isolation", async (t) => {
   const f = await fixture(t);
   let result;

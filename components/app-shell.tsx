@@ -8,6 +8,7 @@ import { ChatPanel, type ChatPanelProps } from "./chat-panel";
 import { PlanetScene } from "./planet-scene";
 import { findPlanetSearchTarget } from "../lib/planet-navigation";
 import { PlanetDetails } from "./planet-details";
+import { PlanetDetailPanel } from "./planet-detail-panel";
 import { KnowledgeSidebar } from "./knowledge-sidebar";
 import { StatusBar } from "./status-bar";
 import { TopBar } from "./top-bar";
@@ -812,7 +813,7 @@ export function AppShell() {
                 </div>
               </section>
             )}
-            <aside className="planet-detail-panel">
+            <PlanetDetailPanel>
               <div className="planet-header">
                 <span>DETAILS + CONTEXT</span>
                 {primarySelectedId ? (
@@ -922,7 +923,18 @@ export function AppShell() {
                   }
                 />
               </div>
-            </aside>
+              <div className="planet-detail-footer">
+                INDEXED{" "}
+                {snapshot?.lastScannedAt
+                  ? new Date(snapshot.lastScannedAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : "—"}
+                <span aria-hidden="true"> | </span>
+                <strong>PLANET</strong>
+              </div>
+            </PlanetDetailPanel>
           </div>
         ) : (
           <div className="workspace-grid workspace-main">

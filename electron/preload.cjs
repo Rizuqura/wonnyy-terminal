@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld("wonnyyDesktop", {
     createConversation: (input) => invokeModel("ai:createConversation", input),
     renameConversation: (input) => invokeModel("ai:renameConversation", input),
     deleteConversation: (id) => invokeModel("ai:deleteConversation", id),
+    deleteMessage: (input) => invokeModel("ai:deleteMessage", input),
     clearConversations: () => invokeModel("ai:clearConversations"),
     resumeConversation: (id) => invokeModel("ai:resumeConversation", id),
     refreshSource: () => invokeModel("ai:refreshSource"),

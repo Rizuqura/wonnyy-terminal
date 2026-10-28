@@ -10,6 +10,7 @@ import type { ChatController } from "../chat/use-chat-runtime";
 import { ConstructionSourcePicker } from "./construction-source-picker";
 import { AgentAvatar } from "./agent-avatar";
 import "./agent-construction.css";
+import "./agent-workbench.css";
 import { wallpaperStyle } from "../chat/chat-presentation";
 const kinds: AgentNodeKind[] = [
   "Context",
@@ -77,6 +78,20 @@ export function AgentConstruction({
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
+  const canvasViewport = useRef<HTMLDivElement>(null);
+  const [canvasScale, setCanvasScale] = useState(1);
+  useEffect(() => {
+    const viewport = canvasViewport.current;
+    if (!viewport) return;
+    const fit = () =>
+      setCanvasScale(
+        Math.min(1, Math.max(0.25, (viewport.clientWidth - 32) / 1060)),
+      );
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [config !== null]);
   const drag = useRef<{
     id: string;
     startX: number;
@@ -129,7 +144,10 @@ export function AgentConstruction({
     );
   const localPoint = (clientX: number, clientY: number) => {
     const rect = canvas.current!.getBoundingClientRect();
-    return { x: clientX - rect.left, y: clientY - rect.top };
+    return {
+      x: (clientX - rect.left) / canvasScale,
+      y: (clientY - rect.top) / canvasScale,
+    };
   };
   const move = (id: string, x: number, y: number) =>
     updateNode(id, {
@@ -480,489 +498,605 @@ export function AgentConstruction({
           updates this agent&apos;s profile and chats.
         </p>
       </details>
-      <div className="studio-layout">
-        <aside className="studio-library" aria-label="Bubble Node Library">
-          <h3>Node library</h3>
-          <p>Drag onto the canvas or use Add.</p>
-          {kinds.map((kind) => (
-            <button
-              key={kind}
-              draggable={!blocked && !config.nodes.some((n) => n.kind === kind)}
-              onDragStart={(e) =>
-                e.dataTransfer.setData("application/qterminal-agent-node", kind)
-              }
-              disabled={blocked || config.nodes.some((n) => n.kind === kind)}
-              onClick={() => add(kind)}
-            >
-              <span aria-hidden="true">{marks[kind]}</span> Add {kind}
-            </button>
-          ))}
-          <small>
-            One node per category. Arrows move selected nodes; Delete removes
-            them. Use output/input handles to connect.
-          </small>
-        </aside>
-        <div
-          className="studio-canvas-viewport"
-          aria-label="Construction canvas viewport"
-        >
-          <div
-            ref={canvas}
-            className="studio-canvas"
-            aria-label="Agent construction canvas"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setConnecting(null);
-                setWirePoint(null);
-              }
-            }}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const kind = e.dataTransfer.getData(
-                "application/qterminal-agent-node",
-              ) as AgentNodeKind;
-              if (kinds.includes(kind))
-                add(kind, localPoint(e.clientX - 60, e.clientY - 60));
-            }}
-          >
-            <svg
-              className="studio-connections"
-              width={1000}
-              height={640}
-              aria-label="Node connections"
-            >
-              {config.edges.map((edge) => {
-                const from = config.nodes.find((n) => n.id === edge.from),
-                  to = config.nodes.find((n) => n.id === edge.to);
-                if (!from || !to) return null;
-                return (
-                  <path
-                    key={edge.from + edge.to}
-                    d={`M ${from.x + 120} ${from.y + 60} C ${from.x + 180} ${from.y + 60}, ${to.x - 60} ${to.y + 60}, ${to.x} ${to.y + 60}`}
-                  />
-                );
-              })}
-              {connecting &&
-                wirePoint &&
-                (() => {
-                  const from = config.nodes.find((n) => n.id === connecting);
-                  return from ? (
-                    <path
-                      className="studio-pending-wire"
-                      d={`M ${from.x + 120} ${from.y + 60} L ${wirePoint.x} ${wirePoint.y}`}
-                    />
-                  ) : null;
-                })()}
-            </svg>
-            {config.nodes.map((item) => (
-              <div
-                key={item.id}
-                className={`studio-node studio-${item.kind.toLowerCase()}${selected === item.id ? " selected" : ""}${dragging === item.id ? " dragging" : ""}`}
-                data-node-id={item.id}
-                role="group"
-                aria-label={`${item.kind} node`}
-                tabIndex={0}
-                style={{ left: item.x, top: item.y }}
-                onFocus={() => setSelected(item.id)}
-                onPointerDown={(e) => startDrag(e, item)}
-                onPointerMove={(e) => {
-                  if (drag.current?.id === item.id)
-                    move(
-                      item.id,
-                      drag.current.x + e.clientX - drag.current.startX,
-                      drag.current.y + e.clientY - drag.current.startY,
-                    );
-                }}
-                onPointerUp={(e) => {
-                  if (e.currentTarget.hasPointerCapture(e.pointerId))
-                    e.currentTarget.releasePointerCapture(e.pointerId);
-                  drag.current = null;
-                  setDragging(null);
-                }}
-                onPointerCancel={() => {
-                  drag.current = null;
-                  setDragging(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.target !== e.currentTarget || blocked) return;
-                  if (e.key.startsWith("Arrow")) {
-                    e.preventDefault();
-                    move(
-                      item.id,
-                      item.x +
-                        (e.key === "ArrowRight"
-                          ? 16
-                          : e.key === "ArrowLeft"
-                            ? -16
-                            : 0),
-                      item.y +
-                        (e.key === "ArrowDown"
-                          ? 16
-                          : e.key === "ArrowUp"
-                            ? -16
-                            : 0),
-                    );
-                  }
-                  if (e.key === "Delete") {
-                    e.preventDefault();
-                    update({
-                      nodes: config.nodes.filter((n) => n.id !== item.id),
-                      edges: config.edges.filter(
-                        (edge) => edge.from !== item.id && edge.to !== item.id,
-                      ),
-                    });
-                    setSelected(null);
-                  }
-                }}
-              >
-                <div className="studio-bubble">
-                  <span aria-hidden="true">{marks[item.kind]}</span>
-                  <strong>{item.kind}</strong>
-                  <small>
-                    {item.config.contextFile
-                      ? item.config.contextFile.relativePath
-                      : item.config.contextBox
-                        ? (chat.contextBoxes.find(
-                            (box) => box.id === item.config.contextBox?.boxId,
-                          )?.name ?? item.config.contextBox.boxName)
-                        : item.kind === "LLM"
-                          ? item.config.modelId || "Shared model"
-                          : item.kind === "Skill"
-                            ? item.config.skillId
-                              ? "Configured"
-                              : "Not configured"
-                            : (item.config.mode ?? "Preferences")}
-                  </small>
-                </div>
-                {item.kind !== "Context" && (
-                  <button
-                    className="studio-port studio-input"
-                    aria-label={`Connect to ${item.kind}`}
-                    disabled={blocked || !connecting}
-                    onClick={() => {
-                      if (connecting) connect(connecting, item.id);
-                    }}
-                    data-input-node={item.id}
-                  />
-                )}
-                {item.kind !== "Output" && (
-                  <button
-                    className="studio-port studio-output"
-                    aria-label={`Connect from ${item.kind}`}
-                    disabled={blocked}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                      setConnecting(item.id);
-                      setWirePoint(localPoint(e.clientX, e.clientY));
-                    }}
-                    onPointerMove={(e) => {
-                      if (e.currentTarget.hasPointerCapture(e.pointerId))
-                        setWirePoint(localPoint(e.clientX, e.clientY));
-                    }}
-                    onPointerUp={(e) => {
-                      if (e.currentTarget.hasPointerCapture(e.pointerId))
-                        e.currentTarget.releasePointerCapture(e.pointerId);
-                      const target = document
-                        .elementFromPoint(e.clientX, e.clientY)
-                        ?.closest<HTMLElement>("[data-input-node]");
-                      if (target?.dataset.inputNode)
-                        connect(item.id, target.dataset.inputNode);
-                      else setWirePoint(null);
-                    }}
-                    onClick={(event) => {
-                      if (event.detail !== 0) return;
-                      setConnecting(item.id);
-                      setNotice(
-                        "Choose an input handle, or drag this handle onto an input.",
-                      );
-                    }}
-                  />
-                )}
-              </div>
-            ))}
+      <div className="studio-workbench">
+        <header className="workbench-heading">
+          <div>
+            <small>AGENT STUDIO / CONSTRUCTION</small>
+            <h2>Agent workbench</h2>
           </div>
-        </div>
-        <aside className="studio-inspector" aria-label="Selected Node Settings">
-          <h3>{node ? `${node.kind} settings` : "Personality & behavior"}</h3>
-          {node ? (
-            <>
-              <p>{explanations[node.kind]}</p>
-              {node.kind !== "LLM" && (
-                <ConstructionSourcePicker
-                  key={node.id}
-                  node={node}
-                  chat={chat}
-                  blocked={blocked}
-                  onConfig={(config) => updateNode(node.id, { config })}
-                  onBusy={setBusy}
-                  onError={setError}
-                  onNotice={setNotice}
-                />
-              )}
-              {node.kind === "Context" && (
-                <p>
-                  Current chat:{" "}
-                  {chat.conversation?.contextFile?.relativePath ??
-                    chat.contextBoxes.find(
-                      (box) => box.id === chat.conversation?.contextBoxId,
-                    )?.name ??
-                    "No bound chat"}{" "}
-                  · {chat.context?.sources.length ?? 0} sources
-                </p>
-              )}
-              {node.kind === "Knowledge" &&
-                profile.availableSkills.includes("knowledge-consolidation") && (
+          <div className="workbench-revision">
+            <span>PROJECT / {profile.displayName}</span>
+            <b>REV. {String(construction.draftRevision).padStart(3, "0")}</b>
+            <small>
+              {construction.activeRevision &&
+              construction.activeRevision === construction.draftRevision
+                ? "DRAFT / ACTIVE"
+                : "DRAFT"}
+            </small>
+          </div>
+        </header>
+        <div className="studio-layout">
+          <aside className="studio-library" aria-label="Bubble Node Library">
+            <small className="workbench-kicker">01 / COMPONENTS</small>
+            <h3>Node library</h3>
+            <p>Drag onto the canvas or use Add.</p>
+            {kinds.map((kind) => (
+              <button
+                key={kind}
+                draggable={
+                  !blocked && !config.nodes.some((n) => n.kind === kind)
+                }
+                onDragStart={(e) =>
+                  e.dataTransfer.setData(
+                    "application/qterminal-agent-node",
+                    kind,
+                  )
+                }
+                disabled={blocked || config.nodes.some((n) => n.kind === kind)}
+                onClick={() => add(kind)}
+              >
+                <span aria-hidden="true">{marks[kind]}</span> Add {kind}
+                <span className="library-node-status" aria-hidden="true">
+                  {config.nodes.some((n) => n.kind === kind) ? "✓" : "+"}
+                </span>
+              </button>
+            ))}
+            <small>
+              One node per category. Arrows move selected nodes; Delete removes
+              them. Use output/input handles to connect.
+            </small>
+          </aside>
+          <section className="studio-sheet" aria-label="Construction sheet">
+            <header className="studio-sheet-header">
+              <span>
+                <small>02</small> Construction sheet
+              </span>
+              <span className="studio-sheet-scale">
+                FIT / {Math.round(canvasScale * 100)}%
+              </span>
+            </header>
+            <div
+              className="studio-canvas-viewport"
+              ref={canvasViewport}
+              aria-label="Construction canvas viewport"
+            >
+              <div
+                className="studio-canvas-space"
+                style={{ width: 1060 * canvasScale, height: 640 * canvasScale }}
+              >
+                <div
+                  ref={canvas}
+                  className="studio-canvas"
+                  style={{
+                    transform: `scale(${canvasScale})`,
+                    transformOrigin: "top left",
+                  }}
+                  data-canvas-scale={canvasScale}
+                  aria-label="Agent construction canvas"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      setConnecting(null);
+                      setWirePoint(null);
+                    }
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const kind = e.dataTransfer.getData(
+                      "application/qterminal-agent-node",
+                    ) as AgentNodeKind;
+                    if (kinds.includes(kind))
+                      add(
+                        kind,
+                        localPoint(
+                          e.clientX - 90 * canvasScale,
+                          e.clientY - 60 * canvasScale,
+                        ),
+                      );
+                  }}
+                >
+                  <div className="studio-sheet-lanes" aria-hidden="true">
+                    <span>A / INPUTS</span>
+                    <span>B / PROCESSOR</span>
+                    <span>C / DELIVERY</span>
+                  </div>
+                  <svg
+                    className="studio-connections"
+                    width={1060}
+                    height={640}
+                    aria-label="Node connections"
+                  >
+                    {config.edges.map((edge) => {
+                      const from = config.nodes.find((n) => n.id === edge.from),
+                        to = config.nodes.find((n) => n.id === edge.to);
+                      if (!from || !to) return null;
+                      return (
+                        <path
+                          key={edge.from + edge.to}
+                          d={`M ${from.x + 180} ${from.y + 60} C ${from.x + 240} ${from.y + 60}, ${to.x - 60} ${to.y + 60}, ${to.x} ${to.y + 60}`}
+                        />
+                      );
+                    })}
+                    {connecting &&
+                      wirePoint &&
+                      (() => {
+                        const from = config.nodes.find(
+                          (n) => n.id === connecting,
+                        );
+                        return from ? (
+                          <path
+                            className="studio-pending-wire"
+                            d={`M ${from.x + 180} ${from.y + 60} L ${wirePoint.x} ${wirePoint.y}`}
+                          />
+                        ) : null;
+                      })()}
+                  </svg>
+                  {config.nodes.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`studio-node studio-${item.kind.toLowerCase()}${selected === item.id ? " selected" : ""}${dragging === item.id ? " dragging" : ""}`}
+                      data-node-id={item.id}
+                      role="group"
+                      aria-label={`${item.kind} node`}
+                      tabIndex={0}
+                      style={{ left: item.x, top: item.y }}
+                      onFocus={() => setSelected(item.id)}
+                      onPointerDown={(e) => startDrag(e, item)}
+                      onPointerMove={(e) => {
+                        if (drag.current?.id === item.id)
+                          move(
+                            item.id,
+                            drag.current.x +
+                              (e.clientX - drag.current.startX) / canvasScale,
+                            drag.current.y +
+                              (e.clientY - drag.current.startY) / canvasScale,
+                          );
+                      }}
+                      onPointerUp={(e) => {
+                        if (e.currentTarget.hasPointerCapture(e.pointerId))
+                          e.currentTarget.releasePointerCapture(e.pointerId);
+                        drag.current = null;
+                        setDragging(null);
+                      }}
+                      onPointerCancel={() => {
+                        drag.current = null;
+                        setDragging(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget || blocked) return;
+                        if (e.key.startsWith("Arrow")) {
+                          e.preventDefault();
+                          move(
+                            item.id,
+                            item.x +
+                              (e.key === "ArrowRight"
+                                ? 16
+                                : e.key === "ArrowLeft"
+                                  ? -16
+                                  : 0),
+                            item.y +
+                              (e.key === "ArrowDown"
+                                ? 16
+                                : e.key === "ArrowUp"
+                                  ? -16
+                                  : 0),
+                          );
+                        }
+                        if (e.key === "Delete") {
+                          e.preventDefault();
+                          update({
+                            nodes: config.nodes.filter((n) => n.id !== item.id),
+                            edges: config.edges.filter(
+                              (edge) =>
+                                edge.from !== item.id && edge.to !== item.id,
+                            ),
+                          });
+                          setSelected(null);
+                        }
+                      }}
+                    >
+                      <div className="studio-bubble">
+                        <div className="studio-node-title">
+                          <span aria-hidden="true">{marks[item.kind]}</span>
+                          <strong>{item.kind}</strong>
+                          <span className="studio-node-code">
+                            {item.kind.slice(0, 3).toUpperCase()}
+                          </span>
+                        </div>
+                        <small>
+                          {item.config.contextFile
+                            ? item.config.contextFile.relativePath
+                            : item.config.contextBox
+                              ? (chat.contextBoxes.find(
+                                  (box) =>
+                                    box.id === item.config.contextBox?.boxId,
+                                )?.name ?? item.config.contextBox.boxName)
+                              : item.kind === "LLM"
+                                ? item.config.modelId || "Shared model"
+                                : item.kind === "Skill"
+                                  ? item.config.skillId
+                                    ? "Configured"
+                                    : "Not configured"
+                                  : (item.config.mode ?? "Preferences")}
+                        </small>
+                        <span className="studio-node-caption">
+                          {item.kind === "LLM"
+                            ? "PROVIDER / MODEL"
+                            : item.kind === "Output"
+                              ? "STREAMED / TEXT"
+                              : item.config.contextBox ||
+                                  item.config.contextFile
+                                ? "SOURCE / ATTACHED"
+                                : "NODE / CONFIGURE"}
+                        </span>
+                      </div>
+                      {item.kind !== "Context" && (
+                        <button
+                          className="studio-port studio-input"
+                          aria-label={`Connect to ${item.kind}`}
+                          disabled={blocked || !connecting}
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={() => {
+                            if (connecting) connect(connecting, item.id);
+                          }}
+                          data-input-node={item.id}
+                        />
+                      )}
+                      {item.kind !== "Output" && (
+                        <button
+                          className="studio-port studio-output"
+                          aria-label={`Connect from ${item.kind}`}
+                          disabled={blocked}
+                          onPointerDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                            setConnecting(item.id);
+                            setWirePoint(localPoint(e.clientX, e.clientY));
+                          }}
+                          onPointerMove={(e) => {
+                            if (e.currentTarget.hasPointerCapture(e.pointerId))
+                              setWirePoint(localPoint(e.clientX, e.clientY));
+                          }}
+                          onPointerUp={(e) => {
+                            if (e.currentTarget.hasPointerCapture(e.pointerId))
+                              e.currentTarget.releasePointerCapture(
+                                e.pointerId,
+                              );
+                            const target = document
+                              .elementFromPoint(e.clientX, e.clientY)
+                              ?.closest<HTMLElement>("[data-input-node]");
+                            if (target?.dataset.inputNode)
+                              connect(item.id, target.dataset.inputNode);
+                            else setWirePoint(null);
+                          }}
+                          onClick={(event) => {
+                            if (event.detail !== 0) return;
+                            setConnecting(item.id);
+                            setNotice(
+                              "Choose an input handle, or drag this handle onto an input.",
+                            );
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))}
+                  <div className="studio-sheet-stamp" aria-hidden="true">
+                    <strong>
+                      {profile.displayName.toUpperCase()} / AGENT SIGNAL FLOW
+                    </strong>
+                    <span>
+                      {config.nodes.length} MODULES · {config.edges.length}{" "}
+                      CONNECTIONS
+                    </span>
+                    <span>REV {construction.draftRevision} / SHT 1:1</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <footer className="studio-sheet-status">
+              <span>● {config.edges.length} CONNECTIONS</span>
+              <span>DRAG TO POSITION · CONNECT VIA HANDLES</span>
+            </footer>
+          </section>
+          <aside
+            className="studio-inspector"
+            aria-label="Selected Node Settings"
+          >
+            <div className="workbench-kicker">03 / CONFIGURATION</div>
+            <p className="studio-inspector-selection">
+              {node
+                ? `${node.kind.toUpperCase()} / SELECTED`
+                : "AGENT / PREFERENCES"}
+            </p>
+            <h3>{node ? `${node.kind} settings` : "Personality & behavior"}</h3>
+            {node ? (
+              <>
+                <p>{explanations[node.kind]}</p>
+                {node.kind !== "LLM" && (
+                  <ConstructionSourcePicker
+                    key={node.id}
+                    node={node}
+                    chat={chat}
+                    blocked={blocked}
+                    onConfig={(config) => updateNode(node.id, { config })}
+                    onBusy={setBusy}
+                    onError={setError}
+                    onNotice={setNotice}
+                  />
+                )}
+                {node.kind === "Context" && (
+                  <p>
+                    Current chat:{" "}
+                    {chat.conversation?.contextFile?.relativePath ??
+                      chat.contextBoxes.find(
+                        (box) => box.id === chat.conversation?.contextBoxId,
+                      )?.name ??
+                      "No bound chat"}{" "}
+                    · {chat.context?.sources.length ?? 0} sources
+                  </p>
+                )}
+                {node.kind === "Knowledge" &&
+                  profile.availableSkills.includes(
+                    "knowledge-consolidation",
+                  ) && (
+                    <label>
+                      Consolidation preview token budget
+                      <input
+                        aria-label="Knowledge preview token budget"
+                        type="number"
+                        min={64}
+                        max={8000}
+                        disabled={blocked}
+                        value={node.config.maxTokens ?? 1500}
+                        onChange={(event) =>
+                          updateNode(node.id, {
+                            config: {
+                              ...node.config,
+                              maxTokens: Number(event.target.value),
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  )}
+                {["Personality", "Workflow", "Output"].includes(node.kind) && (
                   <label>
-                    Consolidation preview token budget
-                    <input
-                      aria-label="Knowledge preview token budget"
-                      type="number"
-                      min={64}
-                      max={8000}
+                    Node preferences
+                    <textarea
+                      aria-label={`${node.kind} preferences`}
+                      value={node.config.instructions ?? ""}
+                      maxLength={1200}
                       disabled={blocked}
-                      value={node.config.maxTokens ?? 1500}
-                      onChange={(event) =>
+                      onChange={(e) =>
                         updateNode(node.id, {
                           config: {
                             ...node.config,
-                            maxTokens: Number(event.target.value),
+                            instructions: e.target.value,
                           },
                         })
                       }
                     />
                   </label>
                 )}
-              {["Personality", "Workflow", "Output"].includes(node.kind) && (
+                {node.kind === "LLM" && (
+                  <label>
+                    Provider / model
+                    <select
+                      aria-label="Agent model"
+                      disabled={blocked}
+                      value={
+                        node.config.providerId && node.config.modelId
+                          ? node.config.providerId + "/" + node.config.modelId
+                          : ""
+                      }
+                      onChange={(e) => {
+                        const model = chat.registry?.models.find(
+                          (m) =>
+                            m.providerId + "/" + m.modelId === e.target.value,
+                        );
+                        updateNode(node.id, {
+                          config: model
+                            ? {
+                                providerId: model.providerId,
+                                modelId: model.modelId,
+                              }
+                            : {},
+                        });
+                      }}
+                    >
+                      <option value="">Inherit shared Settings</option>
+                      {chat.registry?.models.map((model) => (
+                        <option
+                          key={model.providerId + model.modelId}
+                          value={model.providerId + "/" + model.modelId}
+                        >
+                          {model.providerId} / {model.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {node.kind === "Skill" && (
+                  <label>
+                    Registered capability
+                    <select
+                      aria-label="Agent skill"
+                      disabled={blocked}
+                      value={node.config.skillId ?? ""}
+                      onChange={(e) =>
+                        updateNode(node.id, {
+                          config: e.target.value
+                            ? { skillId: "knowledge-consolidation" }
+                            : {},
+                        })
+                      }
+                    >
+                      <option value="">Not configured</option>
+                      {profile.availableSkills.map((skill) => (
+                        <option key={skill} value={skill}>
+                          {skill} (reviewed proposals)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <h4>Connections</h4>
+                {config.edges
+                  .filter(
+                    (edge) => edge.from === node.id || edge.to === node.id,
+                  )
+                  .map((edge) => (
+                    <button
+                      key={edge.from + edge.to}
+                      disabled={blocked}
+                      onClick={() =>
+                        update({
+                          edges: config.edges.filter((item) => item !== edge),
+                        })
+                      }
+                    >
+                      Remove {edge.from} → {edge.to}
+                    </button>
+                  ))}
+                <button
+                  disabled={blocked}
+                  onClick={() => {
+                    update({
+                      nodes: config.nodes.filter((n) => n.id !== node.id),
+                      edges: config.edges.filter(
+                        (e) => e.from !== node.id && e.to !== node.id,
+                      ),
+                    });
+                    setSelected(null);
+                  }}
+                >
+                  Delete {node.kind}
+                </button>
+                <button onClick={() => setSelected(null)}>
+                  Edit personality & behavior
+                </button>
+              </>
+            ) : (
+              <>
                 <label>
-                  Node preferences
+                  Personality
                   <textarea
-                    aria-label={`${node.kind} preferences`}
-                    value={node.config.instructions ?? ""}
-                    maxLength={1200}
+                    aria-label="Agent personality"
+                    maxLength={2000}
                     disabled={blocked}
-                    onChange={(e) =>
-                      updateNode(node.id, {
-                        config: {
-                          ...node.config,
-                          instructions: e.target.value,
-                        },
-                      })
-                    }
+                    value={config.personality}
+                    onChange={(e) => update({ personality: e.target.value })}
                   />
                 </label>
-              )}
-              {node.kind === "LLM" && (
                 <label>
-                  Provider / model
-                  <select
-                    aria-label="Agent model"
+                  Behavior & instructions
+                  <textarea
+                    aria-label="Agent behavior instructions"
+                    maxLength={8000}
                     disabled={blocked}
-                    value={
-                      node.config.providerId && node.config.modelId
-                        ? node.config.providerId + "/" + node.config.modelId
-                        : ""
-                    }
-                    onChange={(e) => {
-                      const model = chat.registry?.models.find(
-                        (m) =>
-                          m.providerId + "/" + m.modelId === e.target.value,
-                      );
-                      updateNode(node.id, {
-                        config: model
-                          ? {
-                              providerId: model.providerId,
-                              modelId: model.modelId,
-                            }
-                          : {},
-                      });
-                    }}
-                  >
-                    <option value="">Inherit shared Settings</option>
-                    {chat.registry?.models.map((model) => (
-                      <option
-                        key={model.providerId + model.modelId}
-                        value={model.providerId + "/" + model.modelId}
-                      >
-                        {model.providerId} / {model.displayName}
-                      </option>
-                    ))}
-                  </select>
+                    value={config.instructions}
+                    onChange={(e) => update({ instructions: e.target.value })}
+                  />
                 </label>
-              )}
-              {node.kind === "Skill" && (
-                <label>
-                  Registered capability
-                  <select
-                    aria-label="Agent skill"
-                    disabled={blocked}
-                    value={node.config.skillId ?? ""}
-                    onChange={(e) =>
-                      updateNode(node.id, {
-                        config: e.target.value
-                          ? { skillId: "knowledge-consolidation" }
-                          : {},
-                      })
-                    }
-                  >
-                    <option value="">Not configured</option>
-                    {profile.availableSkills.map((skill) => (
-                      <option key={skill} value={skill}>
-                        {skill} (reviewed proposals)
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <h4>Connections</h4>
-              {config.edges
-                .filter((edge) => edge.from === node.id || edge.to === node.id)
-                .map((edge) => (
-                  <button
-                    key={edge.from + edge.to}
-                    disabled={blocked}
-                    onClick={() =>
-                      update({
-                        edges: config.edges.filter((item) => item !== edge),
-                      })
-                    }
-                  >
-                    Remove {edge.from} → {edge.to}
-                  </button>
-                ))}
-              <button
-                disabled={blocked}
-                onClick={() => {
-                  update({
-                    nodes: config.nodes.filter((n) => n.id !== node.id),
-                    edges: config.edges.filter(
-                      (e) => e.from !== node.id && e.to !== node.id,
-                    ),
-                  });
-                  setSelected(null);
-                }}
-              >
-                Delete {node.kind}
-              </button>
-              <button onClick={() => setSelected(null)}>
-                Edit personality & behavior
-              </button>
-            </>
-          ) : (
-            <>
-              <label>
-                Personality
-                <textarea
-                  aria-label="Agent personality"
-                  maxLength={2000}
-                  disabled={blocked}
-                  value={config.personality}
-                  onChange={(e) => update({ personality: e.target.value })}
-                />
-              </label>
-              <label>
-                Behavior & instructions
-                <textarea
-                  aria-label="Agent behavior instructions"
-                  maxLength={8000}
-                  disabled={blocked}
-                  value={config.instructions}
-                  onChange={(e) => update({ instructions: e.target.value })}
-                />
-              </label>
-              <details>
-                <summary>Protected grounding policy</summary>
-                <pre>{profile.protectedInstructions}</pre>
-              </details>
-              <p>
-                Personality and preferences cannot grant tools, expand sources
-                or replace protected policy.
-              </p>
-            </>
-          )}
-        </aside>
-      </div>
-      <section
-        className="studio-preview"
-        aria-label="Execution Preview and Logs"
-      >
-        <div>
-          <h3>Execution preview</h3>
-          <p>
-            {config.nodes.find((node) => node.kind === "Context")?.config
-              .contextFile?.relativePath ??
-              config.nodes.find((node) => node.kind === "Context")?.config
-                .contextBox?.boxName ??
-              "Reviewed research source"}{" "}
-            →{" "}
-            {previewModel?.modelId
-              ? `${previewModel.providerId} / ${previewModel.modelId}`
-              : "shared provider/model"}{" "}
-            → streamed text
-          </p>
-          <small>
-            Reviewed files and boxes guide their configured roles. Knowledge
-            sources require confirmation for new chats. No automatic tool
-            execution.
-          </small>
+                <details>
+                  <summary>Protected grounding policy</summary>
+                  <pre>{profile.protectedInstructions}</pre>
+                </details>
+                <p>
+                  Personality and preferences cannot grant tools, expand sources
+                  or replace protected policy.
+                </p>
+              </>
+            )}
+          </aside>
         </div>
-        <details>
-          <summary>Saved activity ({construction.log.length})</summary>
-          <ol>
-            {construction.log
-              .slice()
-              .reverse()
-              .map((event) => (
-                <li key={event.revision}>
-                  r{event.revision} · {event.action} ·{" "}
-                  {new Date(event.at).toLocaleString()}
-                </li>
-              ))}
-          </ol>
-          <pre>
-            {JSON.stringify(
-              chat.runtime.diagnostics ?? {
-                status: "No run diagnostics in this session",
-              },
-              null,
-              2,
-            )}
-          </pre>
-        </details>
-      </section>
-      <footer className="studio-footer">
-        {(error || notice) && (
-          <div className="studio-feedback">
-            {error ? (
-              <p className="studio-error" role="alert">
-                {error}
-              </p>
-            ) : (
-              <p role="status">{notice}</p>
-            )}
+        <section
+          className="studio-preview"
+          aria-label="Execution Preview and Logs"
+        >
+          <div>
+            <h3>Execution preview</h3>
+            <p>
+              {config.nodes.find((node) => node.kind === "Context")?.config
+                .contextFile?.relativePath ??
+                config.nodes.find((node) => node.kind === "Context")?.config
+                  .contextBox?.boxName ??
+                "Reviewed research source"}{" "}
+              →{" "}
+              {previewModel?.modelId
+                ? `${previewModel.providerId} / ${previewModel.modelId}`
+                : "shared provider/model"}{" "}
+              → streamed text
+            </p>
+            <small>
+              Reviewed files and boxes guide their configured roles. Knowledge
+              sources require confirmation for new chats. No automatic tool
+              execution.
+            </small>
           </div>
-        )}
-        <span>
-          {dirty
-            ? "Unsaved edits"
-            : `Saved draft r${construction.draftRevision}`}{" "}
-          ·{" "}
-          {construction.activeRevision
-            ? `Active r${construction.activeRevision}`
-            : "Runtime uses existing profile"}
-          {construction.draftRevision !== construction.activeRevision
-            ? " · Draft is not active"
-            : ""}
-        </span>
-        <button disabled={blocked || !dirty} onClick={() => void save("draft")}>
-          Save draft
-        </button>
-        <button disabled={blocked} onClick={() => void save("apply")}>
-          {busy ? "Working..." : "Save & apply"}
-        </button>
-      </footer>
+          <details className="studio-saved-activity">
+            <summary>Saved activity ({construction.log.length})</summary>
+            <ol>
+              {construction.log
+                .slice()
+                .reverse()
+                .map((event) => (
+                  <li key={event.revision}>
+                    r{event.revision} · {event.action} ·{" "}
+                    {new Date(event.at).toLocaleString()}
+                  </li>
+                ))}
+            </ol>
+            <pre>
+              {JSON.stringify(
+                chat.runtime.diagnostics ?? {
+                  status: "No run diagnostics in this session",
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </details>
+        </section>
+        <footer className="studio-footer">
+          {(error || notice) && (
+            <div className="studio-feedback">
+              {error ? (
+                <p className="studio-error" role="alert">
+                  {error}
+                </p>
+              ) : (
+                <p role="status">{notice}</p>
+              )}
+            </div>
+          )}
+          <span>
+            {dirty
+              ? "Unsaved edits"
+              : `Saved draft r${construction.draftRevision}`}{" "}
+            ·{" "}
+            {construction.activeRevision
+              ? `Active r${construction.activeRevision}`
+              : "Runtime uses existing profile"}
+            {construction.draftRevision !== construction.activeRevision
+              ? " · Draft is not active"
+              : ""}
+          </span>
+          <button
+            disabled={blocked || !dirty}
+            onClick={() => void save("draft")}
+          >
+            Save draft
+          </button>
+          <button disabled={blocked} onClick={() => void save("apply")}>
+            {busy ? "Working..." : "Save & apply"}
+          </button>
+        </footer>
+      </div>
     </section>
   );
 }

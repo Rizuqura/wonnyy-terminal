@@ -528,6 +528,13 @@ export function useChatRuntime({
   }, [fail]);
 
   const latest = conversation?.attempts.at(-1);
+  const retryMessage =
+    latest && ["failed", "cancelled", "interrupted"].includes(latest.status)
+      ? conversation?.messages.find((item) => item.id === latest.userMessageId)
+      : undefined;
+  const retryOnSubmit =
+    !!retryMessage &&
+    (!draft.trim() || draft.trim() === retryMessage.content.trim());
   const retry = () => {
     if (
       !latest ||
@@ -711,6 +718,26 @@ export function useChatRuntime({
       if (all || selected.current?.id === id) setConversation(null);
       dispatch({ type: "reset", state: "READY" });
     });
+  const deleteMessage = (messageId: string) => {
+    const id = conversation?.id;
+    if (!id) return;
+    const message = conversation.messages.find((item) => item.id === messageId);
+    void operate(async (client, current) => {
+      if (!client.deleteMessage)
+        throw new Error("Restart QTerminal to enable message deletion.");
+      const value = await client.deleteMessage({
+        conversationId: id,
+        messageId,
+      });
+      if (!current()) return;
+      accept(value);
+      if (message?.role === "user")
+        setDraft((currentDraft) =>
+          currentDraft.trim() === message.content.trim() ? "" : currentDraft,
+        );
+      dispatch({ type: "reset", state: "READY" });
+    });
+  };
   const refreshModels = () =>
     void operate(async (client, current) => {
       const value = await client.models();
@@ -1219,7 +1246,8 @@ export function useChatRuntime({
       !contextError &&
       !!selectedModelAvailable &&
       !!effectiveOnline,
-    submit: () => void run(draft),
+    submit: () => (retryOnSubmit ? retry() : void run(draft)),
+    retryOnSubmit,
     retry,
     stop,
     newChat,
@@ -1227,6 +1255,7 @@ export function useChatRuntime({
     resume,
     rename,
     remove,
+    deleteMessage,
     refreshSource,
     refreshModels,
     saveSettings,

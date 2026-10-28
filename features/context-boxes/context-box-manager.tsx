@@ -74,13 +74,27 @@ export function ContextBoxManager({
   return (
     <section className="context-box-manager" aria-label="Context Box Manager">
       <div className="pd-section-title">CONTEXT BOX MANAGER</div>
-      <button className="pd-action" onClick={onOpenLibrary}>
+      <button
+        className="pd-action context-library-action"
+        onClick={onOpenLibrary}
+      >
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
+          <path d="m12 2 9 5v10l-9 5-9-5V7Zm0 10v10M3 7l9 5 9-5M8 4l9 5" />
+        </svg>
         Open Context Box library
       </button>
       <p className="context-summary">
         Select and review sources, then save them as a reusable Context Box.
       </p>
-      <div className="pd-section-title">SELECTED CONTEXT</div>
+      <div className="pd-section-title context-selected-heading">
+        SELECTED CONTEXT
+      </div>
       <p className="context-summary">{sources.length} approved sources</p>
       <div className="context-token-estimate" role="status">
         <strong>
@@ -105,7 +119,17 @@ export function ContextBoxManager({
               source.missing ? "missing" : source.changed ? "changed" : ""
             }
           >
-            <span>
+            <svg
+              className="context-source-icon"
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            >
+              <path d="M5 2h9l5 5v15H5ZM14 2v6h5M8 12h8M8 16h8" />
+            </svg>
+            <span title={source.relativePath}>
               {source.relativePath}
               {source.missing
                 ? " · MISSING"
@@ -225,7 +249,9 @@ export function ContextBoxManager({
         usage; CSV sends computed profiles. Creating a box does not start a
         chat.
       </p>
-      <div className="pd-section-title">SAVED CONTEXT BOXES</div>
+      <div className="pd-section-title context-saved-heading">
+        SAVED CONTEXT BOXES
+      </div>
       {!chat.contextBoxes.length && (
         <p className="context-summary">Your saved boxes will appear here.</p>
       )}

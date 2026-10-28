@@ -39,7 +39,8 @@
     "test:appearance:electron": "npm run build && node scripts/electron-appearance-smoke.cjs",
     "test:box-agents:electron": "npm run build && node scripts/electron-box-agents-smoke.cjs",
     "test:add-agent:electron": "npm run build && node scripts/electron-add-agent-smoke.cjs",
-    "test:single-file:electron": "npm run build && node scripts/electron-single-file-smoke.cjs"
+    "test:single-file:electron": "npm run build && node scripts/electron-single-file-smoke.cjs",
+    "test:message-retry:electron": "npm run build && node scripts/electron-message-retry-smoke.cjs"
   },
   "dependencies": {
     "next": "^16.0.0",

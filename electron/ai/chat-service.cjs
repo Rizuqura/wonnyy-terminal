@@ -489,6 +489,33 @@ class ChatService {
       (await this.store(vault)).store.remove(id),
     );
   }
+  async deleteMessage(vault, input) {
+    assertFields(input, ["conversationId", "messageId"]);
+    validId(input.conversationId);
+    validId(input.messageId);
+    return this.exclusive(async () =>
+      (await this.store(vault)).store.update(input.conversationId, (value) => {
+        const message = value.messages.find(
+          (item) => item.id === input.messageId,
+        );
+        if (!message) return; // Repeated deletion is safe.
+        if (message.role === "user") {
+          value.messages = value.messages.filter(
+            (item) =>
+              item.id !== message.id && item.userMessageId !== message.id,
+          );
+          value.attempts = value.attempts.filter(
+            (item) => item.userMessageId !== message.id,
+          );
+        } else
+          value.messages = value.messages.filter(
+            (item) => item.id !== message.id,
+          );
+        // Immutable run records remain intact. Recovery only reconciles pending
+        // attempts, so deleted completed messages cannot be restored on restart.
+      }),
+    );
+  }
   async clear(vault) {
     return this.exclusive(async () => {
       const { store } = await this.store(vault);
@@ -688,9 +715,19 @@ class ChatService {
           });
         }
       }
-      if (input.retryOf) {
+      const lastAttempt = conversation.attempts.at(-1);
+      const retryOf =
+        input.retryOf ??
+        (lastAttempt &&
+        ["failed", "cancelled", "interrupted"].includes(lastAttempt.status) &&
+        conversation.messages.find(
+          (message) => message.id === lastAttempt.userMessageId,
+        )?.content === question
+          ? lastAttempt.requestId
+          : undefined);
+      if (retryOf) {
         const failed = conversation.attempts.find(
-          (attempt) => attempt.requestId === input.retryOf,
+          (attempt) => attempt.requestId === retryOf,
         );
         if (
           !failed ||
@@ -712,7 +749,7 @@ class ChatService {
         this.upgradeConversation(value);
         value.contextIdentity = identity;
         if (boxForTurn) value.contextBoxRevision = boxForTurn.revision;
-        if (!input.retryOf)
+        if (!retryOf)
           value.messages.push({
             id: userMessageId,
             conversationId: value.id,

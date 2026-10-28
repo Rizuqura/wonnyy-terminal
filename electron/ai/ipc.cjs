@@ -225,6 +225,9 @@ function registerAiIpc({
   handle("createConversation", (_, input) => service.create(getVault(), input));
   handle("renameConversation", (_, input) => service.rename(getVault(), input));
   handle("deleteConversation", (_, id) => service.remove(getVault(), id));
+  handle("deleteMessage", (_, input) =>
+    service.deleteMessage(getVault(), input),
+  );
   handle("clearConversations", () => service.clear(getVault()));
   handle("resumeConversation", (_, id) => service.resume(getVault(), id));
   handle("refreshSource", () => service.refreshSource(getVault()));
