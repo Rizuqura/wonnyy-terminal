@@ -264,6 +264,11 @@ export function AgentContacts({
       >
         + Add agent
       </button>
+      {agents.length === 0 && (
+        <p className="ai-subtle">
+          No agents yet. Add an agent to build your own.
+        </p>
+      )}
       {agents.map((agent) => (
         <AgentContact
           key={agent.id}

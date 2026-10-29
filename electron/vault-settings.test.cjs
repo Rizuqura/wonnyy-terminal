@@ -1,0 +1,22 @@
+const test = require("node:test"),
+  assert = require("node:assert/strict"),
+  fs = require("node:fs/promises"),
+  path = require("node:path"),
+  os = require("node:os");
+const { initializeVault, saveVault } = require("./vault-settings.cjs");
+test("fresh vault is empty and user-owned; explicit folder selection persists without importing developer data", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "qterminal-vault-settings-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const profile = path.join(root, "profile"),
+    docs = path.join(root, "Documents");
+  const first = await initializeVault(profile, docs);
+  assert.equal(first, path.join(docs, "QTerminal Vault"));
+  assert.deepEqual(await fs.readdir(first), []);
+  const selected = path.join(root, "selected");
+  await saveVault(profile, selected);
+  assert.equal(await initializeVault(profile, docs), selected);
+  assert.equal(await initializeVault(profile, docs, root), root);
+  assert.equal(await initializeVault(profile, docs), selected);
+});

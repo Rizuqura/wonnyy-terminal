@@ -380,6 +380,7 @@ export function ContextBoxes({
               <button
                 disabled={
                   busy ||
+                  !chat.agent ||
                   !box.items.length ||
                   box.items.length > 32 ||
                   available !== box.items.length
@@ -391,7 +392,9 @@ export function ContextBoxes({
                   onAttach();
                 }}
               >
-                Attach to {chat.agent?.displayName ?? "Wonnyy Agent"}
+                {chat.agent
+                  ? `Attach to ${chat.agent.displayName}`
+                  : "Create an agent first"}
               </button>
             </div>
             {renaming && (

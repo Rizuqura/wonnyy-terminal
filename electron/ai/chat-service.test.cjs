@@ -403,9 +403,10 @@ test("Knowledge source edits or membership changes cannot silently expand existi
 });
 async function studioFixture(t) {
   const f = await fixture(t);
-  f.service.agents = new (require("./agent-store.cjs").AgentStore)(
-    path.join(f.root, "agent-profiles"),
-  );
+  f.service.agents =
+    new (require("../../scripts/fixtures/legacy-agents.cjs").AgentStore)(
+      path.join(f.root, "agent-profiles"),
+    );
   return f;
 }
 async function constructionBox(f, name, file, content) {
@@ -725,7 +726,7 @@ test("configuration references are fully budgeted and oversized guidance is neve
 });
 test("applied construction changes actual prompt identity/preferences and model; drafts and old run provenance stay isolated", async (t) => {
   const f = await fixture(t);
-  const { AgentStore } = require("./agent-store.cjs");
+  const { AgentStore } = require("../../scripts/fixtures/legacy-agents.cjs");
   f.service.agents = new AgentStore(path.join(f.root, "studio-profiles"));
   const agent = await f.service.agents.get();
   const config = structuredClone(agent.construction.draft);
@@ -768,7 +769,7 @@ test("applied construction changes actual prompt identity/preferences and model;
 });
 test("agent-bound creation and inference isolate CHronoZ identity, settings, history and duplicate IDs", async (t) => {
   const f = await fixture(t);
-  const { AgentStore } = require("./agent-store.cjs");
+  const { AgentStore } = require("../../scripts/fixtures/legacy-agents.cjs");
   f.service.agents = new AgentStore(path.join(f.root, "profiles"));
   await f.service.agents.save({
     id: "wonnyy-agent",
@@ -845,7 +846,7 @@ test("legacy agent association normalizes without rewrites and subsequent runs c
     assert.equal(list[0].agentId, "wonnyy-agent");
   }
   assert.equal(await fs.readFile(file, "utf8"), original);
-  const { AgentStore } = require("./agent-store.cjs");
+  const { AgentStore } = require("../../scripts/fixtures/legacy-agents.cjs");
   f.service.agents = new AgentStore(path.join(f.root, "agent-settings"));
   await f.service.agents.save({
     id: "wonnyy-agent",

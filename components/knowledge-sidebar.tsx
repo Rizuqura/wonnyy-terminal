@@ -84,8 +84,12 @@ export function KnowledgeSidebar({
           disabled={!ready}
         />
       </label>
-      <div className="vault-title" title={snapshot?.rootPath ?? "C:\\bank"}>
-        ▾ <span className="folder">▰</span> {snapshot?.rootPath ?? "C:\\bank"}
+      <div
+        className="vault-title"
+        title={snapshot?.rootPath ?? "Choose a vault"}
+      >
+        ▾ <span className="folder">▰</span>{" "}
+        {snapshot?.rootPath ?? "Choose a vault"}
       </div>
       <button className="vault-change" onClick={onChangeVault}>
         CHANGE VAULT

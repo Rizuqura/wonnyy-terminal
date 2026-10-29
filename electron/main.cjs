@@ -8,6 +8,13 @@ const {
   nativeImage,
 } = require("electron");
 const path = require("path");
+const { pathToFileURL } = require("node:url");
+const { initializeVault, saveVault } = require("./vault-settings.cjs");
+const {
+  guardedIpc,
+  developmentUrl,
+  sameDocument,
+} = require("./desktop-security.cjs");
 const {
   readPdfFile,
   readVaultFile,
@@ -30,10 +37,13 @@ const { GeminiProvider } = require("./ai/providers/gemini-provider.cjs");
 const { registerAiIpc } = require("./ai/ipc.cjs");
 const { ModelRuntimeError } = require("./ai/model-errors.cjs");
 
-const isDevelopment = Boolean(process.env.ELECTRON_START_URL);
-let activeVaultPath =
-  process.env.WONNYY_VAULT_PATH ||
-  (process.platform === "win32" ? "C:\\bank" : "/bank");
+const devUrl = developmentUrl(process.env.ELECTRON_START_URL, app.isPackaged);
+const isDevelopment = Boolean(devUrl);
+const entryUrl =
+  devUrl ?? pathToFileURL(path.join(__dirname, "..", "out", "index.html")).href;
+let mainWindow;
+const trustedIpc = guardedIpc(ipcMain, () => mainWindow?.webContents, entryUrl);
+let activeVaultPath;
 let ollamaProvider;
 let chatService;
 
@@ -67,7 +77,9 @@ async function selectVaultFolder() {
   if (result.canceled || result.filePaths.length === 0) return null;
   return chatService.changeKnowledge(() => {
     activeVaultPath = result.filePaths[0];
-    return getVaultSnapshot();
+    return saveVault(app.getPath("userData"), activeVaultPath).then(
+      getVaultSnapshot,
+    );
   });
 }
 
@@ -97,6 +109,17 @@ function createWindow() {
       sandbox: true,
     },
   });
+  mainWindow = window;
+  window.webContents.session.setPermissionRequestHandler((_, __, callback) =>
+    callback(false),
+  );
+  window.webContents.session.setPermissionCheckHandler(() => false);
+  window.webContents.on("will-navigate", (event, url) => {
+    if (!sameDocument(url, entryUrl)) event.preventDefault();
+  });
+  window.webContents.on("will-attach-webview", (event) =>
+    event.preventDefault(),
+  );
 
   window.webContents.on("destroyed", () => {
     void chatService?.cancelAll();
@@ -111,7 +134,7 @@ function createWindow() {
   });
 
   if (isDevelopment) {
-    window.loadURL(process.env.ELECTRON_START_URL);
+    window.loadURL(devUrl);
   } else {
     window.loadFile(path.join(__dirname, "..", "out", "index.html"));
   }
@@ -129,62 +152,69 @@ app.setPath(
 );
 app.setName("QTerminal");
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  activeVaultPath = await initializeVault(
+    app.getPath("userData"),
+    app.getPath("documents"),
+    process.env.WONNYY_VAULT_PATH,
+  );
   app.setAppUserModelId("com.wonnyy.amadeus");
-  ipcMain.handle("vault:getSnapshot", getVaultSnapshot);
-  ipcMain.handle("vault:rescan", () => changeVaultKnowledge(scanVault));
-  ipcMain.handle("vault:selectFolder", selectVaultFolder);
-  ipcMain.handle("vault:read", (_, relativePath) =>
+  trustedIpc.handle("vault:getSnapshot", getVaultSnapshot);
+  trustedIpc.handle("vault:rescan", () => changeVaultKnowledge(scanVault));
+  trustedIpc.handle("vault:selectFolder", selectVaultFolder);
+  trustedIpc.handle("vault:read", (_, relativePath) =>
     readVaultFile(activeVaultPath, relativePath),
   );
-  ipcMain.handle("vault:readPdf", (_, relativePath) =>
+  trustedIpc.handle("vault:readPdf", (_, relativePath) =>
     readPdfFile(activeVaultPath, relativePath),
   );
-  ipcMain.handle("vault:search", (_, query) =>
+  trustedIpc.handle("vault:search", (_, query) =>
     searchPdfText(activeVaultPath, query),
   );
-  ipcMain.handle("stations:getState", () =>
+  trustedIpc.handle("stations:getState", () =>
     stations.getStationState(activeVaultPath),
   );
-  ipcMain.handle("stations:create", (_, name) =>
+  trustedIpc.handle("stations:create", (_, name) =>
     stations.createStation(activeVaultPath, name),
   );
-  ipcMain.handle("stations:rename", (_, id, name) =>
+  trustedIpc.handle("stations:rename", (_, id, name) =>
     stations.renameStation(activeVaultPath, id, name),
   );
-  ipcMain.handle("stations:delete", (_, id) =>
+  trustedIpc.handle("stations:delete", (_, id) =>
     stations.deleteStation(activeVaultPath, id),
   );
-  ipcMain.handle("stations:setAssignments", (_, paths, stationId, assigned) =>
-    stations.setAssignments(activeVaultPath, paths, stationId, assigned),
+  trustedIpc.handle(
+    "stations:setAssignments",
+    (_, paths, stationId, assigned) =>
+      stations.setAssignments(activeVaultPath, paths, stationId, assigned),
   );
-  ipcMain.handle("stations:suggestions", () =>
+  trustedIpc.handle("stations:suggestions", () =>
     stations.suggestReattachments(activeVaultPath),
   );
-  ipcMain.handle("stations:reattach", (_, fromPath, toPath) =>
+  trustedIpc.handle("stations:reattach", (_, fromPath, toPath) =>
     stations.reattach(activeVaultPath, fromPath, toPath),
   );
-  ipcMain.handle("context:preview", (_, paths) =>
+  trustedIpc.handle("context:preview", (_, paths) =>
     stations.previewContext(activeVaultPath, paths),
   );
-  ipcMain.handle("context:add", (_, paths) =>
+  trustedIpc.handle("context:add", (_, paths) =>
     changeVaultKnowledge((vaultPath) => stations.addContext(vaultPath, paths)),
   );
-  ipcMain.handle("context:remove", (_, paths) =>
+  trustedIpc.handle("context:remove", (_, paths) =>
     changeVaultKnowledge((vaultPath) =>
       stations.removeContext(vaultPath, paths),
     ),
   );
-  ipcMain.handle("context:clear", () =>
+  trustedIpc.handle("context:clear", () =>
     changeVaultKnowledge((vaultPath) => stations.clearContext(vaultPath)),
   );
-  ipcMain.handle("context:buildPackage", () =>
+  trustedIpc.handle("context:buildPackage", () =>
     stations.buildContextPackage(activeVaultPath),
   );
-  ipcMain.handle("brain:prepareScope", (_, input) =>
+  trustedIpc.handle("brain:prepareScope", (_, input) =>
     brainOperation(() => stations.prepareBrainScope(activeVaultPath, input)),
   );
-  ipcMain.handle("brain:readSource", (_, input) =>
+  trustedIpc.handle("brain:readSource", (_, input) =>
     brainOperation(() => stations.readBrainSource(activeVaultPath, input)),
   );
   const provider = getOllamaProvider();
@@ -200,35 +230,47 @@ app.whenReady().then(() => {
     nativeImage.createFromBuffer(bytes),
   );
   chatService = new ChatService({ provider, registry, agents });
-  registerAiIpc({
-    agents,
-    chooseAvatar: async () => {
-      const result = await dialog.showOpenDialog({
-        title: "Choose agent profile picture",
-        properties: ["openFile"],
-        filters: [
-          {
-            name: "Profile pictures",
-            extensions: ["png", "jpg", "jpeg", "webp"],
-          },
-        ],
-      });
-      if (result.canceled || !result.filePaths[0]) return null;
-      const file = result.filePaths[0],
-        fs = require("node:fs/promises");
-      const stat = await fs.stat(file);
-      if (!stat.isFile() || stat.size > 5 * 1024 * 1024)
-        throw new ModelRuntimeError(
-          "MODEL_INVALID_REQUEST",
-          "Choose a profile picture up to 5 MB.",
-        );
-      return agents.prepareAvatar(
-        await fs.readFile(file),
-        path.extname(file).toLowerCase(),
+  const chooseAgentPicture = async (kind) => {
+    const result = await dialog.showOpenDialog({
+      title:
+        kind === "avatar"
+          ? "Choose agent profile picture"
+          : kind === "banner"
+            ? "Choose profile banner"
+            : "Choose chat wallpaper",
+      properties: ["openFile"],
+      filters: [
+        {
+          name: "Images",
+          extensions: ["png", "jpg", "jpeg", "webp"],
+        },
+      ],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const file = result.filePaths[0],
+      fs = require("node:fs/promises");
+    const stat = await fs.stat(file);
+    if (!stat.isFile() || stat.size > 5 * 1024 * 1024)
+      throw new ModelRuntimeError(
+        "MODEL_INVALID_REQUEST",
+        "Choose an image up to 5 MB.",
       );
-    },
+    const bytes = await fs.readFile(file),
+      extension = path.extname(file).toLowerCase();
+    return kind === "avatar"
+      ? agents.prepareAvatar(bytes, extension)
+      : agents.prepareBackdrop(bytes, extension, kind);
+  };
+  registerAiIpc({
+    researchKnowledge:
+      new (require("./ai/research-knowledge.cjs").ResearchKnowledge)(
+        app.getPath("userData"),
+      ),
+    agents,
+    chooseAvatar: () => chooseAgentPicture("avatar"),
+    chooseBackdrop: (kind) => chooseAgentPicture(kind),
     credentials,
-    ipcMain,
+    ipcMain: trustedIpc,
     getVault: () => activeVaultPath,
     service: chatService,
     registry,

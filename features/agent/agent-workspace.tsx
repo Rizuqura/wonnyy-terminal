@@ -243,18 +243,29 @@ export function AgentWorkspace({
             <button onClick={() => setDrawer(null)}>Close panel</button>
           )}
         </div>
-        <ChatPanel
-          variant="workspace"
-          controller={chat}
-          onOpenSource={onOpenSource}
-          onExpandContext={onManageContext}
-          onOpenAgentSettings={onSettings}
-          detailsOpen={showDetails}
-          onToggleDetails={() => {
-            if (available > 1100) setDetailsOpen((value) => !value);
-            else setDrawer((value) => (value === "details" ? null : "details"));
-          }}
-        />
+        {!chat.agent ? (
+          <div className="agent-empty-state">
+            <h2>Build your first agent</h2>
+            <p>
+              Choose its personality, knowledge and model in agent settings.
+            </p>
+            <button onClick={() => setAddingAgent(true)}>+ Add agent</button>
+          </div>
+        ) : (
+          <ChatPanel
+            variant="workspace"
+            controller={chat}
+            onOpenSource={onOpenSource}
+            onExpandContext={onManageContext}
+            onOpenAgentSettings={onSettings}
+            detailsOpen={showDetails}
+            onToggleDetails={() => {
+              if (available > 1100) setDetailsOpen((value) => !value);
+              else
+                setDrawer((value) => (value === "details" ? null : "details"));
+            }}
+          />
+        )}
       </div>
       {showDetails && available > 1100 && divider("details")}
       {showDetails && (

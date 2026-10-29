@@ -7,7 +7,12 @@ export interface PlanetDetailsProps {
   onExplore: (id: string) => void;
 }
 
-export function PlanetDetails({ selected, graph, onOpenFile, onExplore }: Readonly<PlanetDetailsProps>) {
+export function PlanetDetails({
+  selected,
+  graph,
+  onOpenFile,
+  onExplore,
+}: Readonly<PlanetDetailsProps>) {
   if (!graph) {
     return (
       <div className="pd-body">
@@ -15,7 +20,7 @@ export function PlanetDetails({ selected, graph, onOpenFile, onExplore }: Readon
         <p className="pd-empty">
           Vault offline.
           <br />
-          Open the Electron desktop window to read /bank.
+          Open QTerminal and choose a knowledge vault.
         </p>
       </div>
     );
@@ -42,7 +47,9 @@ export function PlanetDetails({ selected, graph, onOpenFile, onExplore }: Readon
 
   const isDir = selected.type === "directory";
   const isAsteroid = selected.fileType === "other";
-  const parent = selected.parentId ? graph.byId.get(selected.parentId) : undefined;
+  const parent = selected.parentId
+    ? graph.byId.get(selected.parentId)
+    : undefined;
   const childFiles = selected.children.filter((id) => {
     const child = graph.byId.get(id);
     return child?.type === "file";
@@ -52,18 +59,35 @@ export function PlanetDetails({ selected, graph, onOpenFile, onExplore }: Readon
   return (
     <div className="pd-body">
       <div className="pd-section-title">
-        <span className={isDir ? "pd-star" : "pd-planet"}>{isDir ? "★" : "○"}</span>
+        <span className={isDir ? "pd-star" : "pd-planet"}>
+          {isDir ? "★" : "○"}
+        </span>
         {selected.name}
       </div>
       <div className="pd-rule" />
-      <Detail label="TYPE" value={isDir ? "Directory" : isAsteroid ? "ASTEROID · UNREADABLE" : (selected.fileType ?? "file").toUpperCase()} />
+      <Detail
+        label="TYPE"
+        value={
+          isDir
+            ? "Directory"
+            : isAsteroid
+              ? "ASTEROID · UNREADABLE"
+              : (selected.fileType ?? "file").toUpperCase()
+        }
+      />
       <Detail label="PATH" value={selected.path} wrap />
       {parent ? <Detail label="PARENT" value={parent.name} /> : null}
       <div className="pd-rule" />
       {isDir ? (
         <>
-          <Detail label="CHILDREN" value={`${childFiles} files · ${childDirs} directories`} />
-          <Detail label="CONNECTIONS" value={String(selected.connections.length)} />
+          <Detail
+            label="CHILDREN"
+            value={`${childFiles} files · ${childDirs} directories`}
+          />
+          <Detail
+            label="CONNECTIONS"
+            value={String(selected.connections.length)}
+          />
           <div className="pd-rule" />
           <button className="pd-action" onClick={() => onExplore(selected.id)}>
             EXPLORE ▸
@@ -85,14 +109,30 @@ export function PlanetDetails({ selected, graph, onOpenFile, onExplore }: Readon
             </div>
           ) : null}
           <div className="pd-rule" />
-          {isAsteroid ? <p className="pd-empty">This file is mapped for structure only and cannot be opened in QTerminal.</p> : <button className="pd-action" onClick={() => onOpenFile(selected.id)}>OPEN ⏎</button>}
+          {isAsteroid ? (
+            <p className="pd-empty">
+              This file is mapped for structure only and cannot be opened in
+              QTerminal.
+            </p>
+          ) : (
+            <button
+              className="pd-action"
+              onClick={() => onOpenFile(selected.id)}
+            >
+              OPEN ⏎
+            </button>
+          )}
         </>
       )}
     </div>
   );
 }
 
-function Detail({ label, value, wrap }: Readonly<{ label: string; value: string; wrap?: boolean }>) {
+function Detail({
+  label,
+  value,
+  wrap,
+}: Readonly<{ label: string; value: string; wrap?: boolean }>) {
   return (
     <div className={`pd-detail${wrap ? " pd-detail-wrap" : ""}`}>
       <span className="pd-detail-label">{label}</span>

@@ -3,7 +3,10 @@ const test = require("node:test"),
   fs = require("node:fs/promises"),
   os = require("node:os"),
   path = require("node:path");
-const { AgentStore, AGENT_ID } = require("./agent-store.cjs");
+const {
+  AgentStore,
+  AGENT_ID,
+} = require("../../scripts/fixtures/legacy-agents.cjs");
 const { SYSTEM_PROMPT, buildContextMessages } = require("./prompt-builder.cjs");
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
 const image = {
@@ -13,6 +16,38 @@ const image = {
   resize: () => image,
   toPNG: () => png,
 };
+test("a missing production profile starts empty without writing personal defaults", async (t) => {
+  const { root } = await fixture(t);
+  const { AgentStore: ProductionStore } = require("./agent-store.cjs");
+  const store = new ProductionStore(root);
+  assert.deepEqual(await store.list(), []);
+  await assert.rejects(store.get("wonnyy-agent"), /Unknown agent/);
+  await assert.rejects(fs.stat(store.file), { code: "ENOENT" });
+});
+test("explicit empty agent setup stays empty across reads and only adds user-created agents", async (t) => {
+  const { root, store } = await fixture(t);
+  const empty = JSON.stringify({
+    schemaVersion: 1,
+    includeDefaultAgents: false,
+    agents: {},
+  });
+  await fs.writeFile(store.file, empty);
+  assert.deepEqual(await store.list(), []);
+  assert.equal(await fs.readFile(store.file, "utf8"), empty);
+  await assert.rejects(store.get("wonnyy-agent"), /Unknown agent/);
+  await assert.rejects(store.get("chronoz"), /Unknown agent/);
+  const agent = await store.create({
+    name: "Wonnyy Agent",
+    creationId: "00000000-0000-4000-8000-000000000001",
+  });
+  assert.equal(agent.avatar.type, "letter");
+  const restarted = new AgentStore(root, () => image);
+  assert.deepEqual(
+    (await restarted.list()).map((row) => row.id),
+    [agent.id],
+  );
+  assert.equal((await restarted.read()).includeDefaultAgents, false);
+});
 test("retired prototype references do not block file-based profiles or rewrite saved data", async (t) => {
   const { store } = await fixture(t);
   const agent = await store.get("chronoz");

@@ -74,7 +74,10 @@ function registerAiIpc({
           !(error instanceof ModelRuntimeError) &&
           error?.name !== "BrainScopeError"
         )
-          console.error("Wonnyy runtime:", error);
+          console.error(
+            "QTerminal runtime operation failed.",
+            error?.name ?? "Error",
+          );
         return { ok: false, error: serializeModelError(error) };
       }
     });

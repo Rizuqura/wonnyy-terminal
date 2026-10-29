@@ -240,19 +240,20 @@ export function useChatRuntime({
         } catch {}
         const profile =
           profiles.find((p) => p.id === restoredAgent) ?? profiles[0];
-        if (!savedId)
+        if (!savedId && profile)
           try {
             savedId = localStorage.getItem(
               `qterminal-active-chat:${vaultPath}:${profile.id}`,
             );
           } catch {}
         setAgents(profiles);
-        setAgent(profile);
-        agentRef.current = profile.id;
-        setActiveAgentId(profile.id);
+        setAgent(profile ?? null);
+        agentRef.current = profile?.id ?? "";
+        setActiveAgentId(profile?.id ?? "");
         setConversation(
-          list.find((c) => c.id === savedId && c.agentId === profile.id) ??
-            null,
+          list.find(
+            (c) => profile && c.id === savedId && c.agentId === profile.id,
+          ) ?? null,
         );
         chats.current = list;
         setConnected(true);

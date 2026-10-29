@@ -2,6 +2,16 @@ const { app } = require("electron");
 if (!process.env.WONNYY_SMOKE_DATA)
   throw new Error("Isolated application data required");
 app.setPath("userData", process.env.WONNYY_SMOKE_DATA);
+// Existing acceptance cases intentionally exercise legacy built-in profiles.
+// Release first-run acceptance never seeds a profile.
+if (!process.env.WONNYY_RELEASE_DOCUMENTS) {
+  const fs = require("node:fs"),
+    path = require("node:path");
+  const file = path.join(process.env.WONNYY_SMOKE_DATA, "agents.json");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (!fs.existsSync(file))
+    fs.writeFileSync(file, '{"schemaVersion":1,"agents":{}}');
+}
 const { createOnlineSmokeFetch } = require("./fixtures/online-smoke-fetch.cjs");
 const mock = createOnlineSmokeFetch();
 globalThis.fetch = mock.fetchImpl;

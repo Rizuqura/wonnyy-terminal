@@ -335,6 +335,7 @@ export function ChatPanel({
       } as CSSProperties)
     : undefined;
 
+  if (!chat.agent) return null;
   if (closed)
     return (
       <button
