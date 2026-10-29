@@ -32,8 +32,9 @@ export function ContextBoxManager({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+  const [estimateRevision, setEstimateRevision] = useState(0);
   const [estimates, setEstimates] = useState<
-    Record<string, { tokens: number; unavailable: number }>
+    Record<string, { tokens: number; unavailable: number; error?: string }>
   >({});
   const pending = useRef(false);
   const sources = state?.activeContext ?? [];
@@ -55,12 +56,26 @@ export function ContextBoxManager({
               unavailable: current.items.filter(
                 (item) => item.status !== "ready",
               ).length,
+              error: current.items
+                .filter((item) => item.status !== "ready")
+                .map(
+                  (item) =>
+                    `${item.relativePath}: ${item.message ?? "Could not read this source."}`,
+                )
+                .join(" "),
             },
           ] as const;
-        } catch {
+        } catch (error) {
           return [
             box.id,
-            { tokens: 0, unavailable: box.items.length || 1 },
+            {
+              tokens: 0,
+              unavailable: box.items.length || 1,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Token estimation failed. Refresh estimates to retry.",
+            },
           ] as const;
         }
       }),
@@ -70,7 +85,7 @@ export function ContextBoxManager({
     return () => {
       stale = true;
     };
-  }, [chat.contextBoxes, state?.revision]);
+  }, [chat.contextBoxes, state, estimateRevision]);
   return (
     <section className="context-box-manager" aria-label="Context Box Manager">
       <div className="pd-section-title">CONTEXT BOX MANAGER</div>
@@ -252,6 +267,15 @@ export function ContextBoxManager({
       <div className="pd-section-title context-saved-heading">
         SAVED CONTEXT BOXES
       </div>
+      {!!chat.contextBoxes.length && (
+        <button
+          className="station-secondary"
+          disabled={chat.contextBoxes.some((box) => !estimates[box.id])}
+          onClick={() => setEstimateRevision((value) => value + 1)}
+        >
+          Refresh token estimates
+        </button>
+      )}
       {!chat.contextBoxes.length && (
         <p className="context-summary">Your saved boxes will appear here.</p>
       )}
@@ -277,6 +301,14 @@ export function ContextBoxManager({
                     : `~${estimates[box.id].tokens.toLocaleString()} est. tokens`
                   : "Estimating tokens…"}
               </small>
+              {estimates[box.id]?.error && (
+                <small
+                  className="context-estimate-error"
+                  style={{ color: "#efad95" }}
+                >
+                  {estimates[box.id].error}
+                </small>
+              )}
             </button>
           </div>
         ))}

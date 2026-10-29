@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { contextLimit } from "../../electron/ai/context-limits.cjs";
 import type { ChatController } from "../chat/use-chat-runtime";
 import type {
   ModelDescriptor,
@@ -73,6 +74,15 @@ export function ModelSettings({
     (provider) => provider.id === providerId,
   );
   const active = chat.registry?.settings;
+  const draftModel = chat.registry?.models.find(
+    (model) =>
+      model.providerId === draft?.providerId &&
+      model.modelId === draft?.modelId,
+  );
+  const maximumContext = contextLimit(
+    draft?.providerId ?? "ollama",
+    draftModel?.contextLength,
+  );
   const activeProvider = providers.find(
     (provider) => provider.id === active?.providerId,
   );
@@ -106,7 +116,7 @@ export function ModelSettings({
   const useModel = (model: ModelDescriptor) => {
     const contextWindow = Math.min(
       active?.contextWindow ?? 8192,
-      model.contextLength ?? 32768,
+      contextLimit(model.providerId, model.contextLength),
     );
     const outputLimit = Math.min(
       active?.outputLimit ?? 2048,
@@ -610,7 +620,13 @@ export function ModelSettings({
               <div className="model-fields">
                 {(
                   [
-                    ["contextWindow", "Context window", 2048, 32768, 1],
+                    [
+                      "contextWindow",
+                      "Context window",
+                      2048,
+                      maximumContext,
+                      1,
+                    ],
                     ["outputLimit", "Output limit", 128, 8192, 1],
                     ["temperature", "Temperature", 0, 2, 0.1],
                   ] as const
@@ -643,6 +659,14 @@ export function ModelSettings({
                   Stream answers
                 </label>
               </div>
+              <p className="ai-subtle">
+                Context window limit: {maximumContext.toLocaleString()} tokens.
+                {draft.providerId === "ollama"
+                  ? " Local models retain the 32K application ceiling."
+                  : draftModel?.contextLength
+                    ? " Based on provider-reported model capacity and the application ceiling. Increase the window here to fit larger Context Boxes; output tokens also use this budget."
+                    : " Refresh Models to retrieve capacity before selecting a larger window."}
+              </p>
               <details>
                 <summary>Timeouts and memory</summary>
                 <div className="model-fields">

@@ -50,7 +50,7 @@ function validate(value) {
           item.relativePath
             .split(/[\\/]/)
             .some((part) => part === ".." || part === ".wonnyy") ||
-          !/\.(md|markdown|csv|pdf)$/i.test(item.relativePath) ||
+          !/\.(md|markdown|csv|pdf|png|jpg|jpeg)$/i.test(item.relativePath) ||
           !Number.isFinite(Date.parse(item.addedAt)),
       ) ||
       new Set(box.items.map((item) => item.id)).size !== box.items.length ||

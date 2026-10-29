@@ -160,8 +160,9 @@ export function ConstructionSourcePicker({
             </select>
           </label>
           <p>
-            Choose a single Markdown, CSV or text-PDF file from this vault.
-            Review its full contents and estimated tokens before attaching it.
+            Choose a single Markdown, CSV, PDF or PNG/JPG/JPEG image from this
+            vault. Review its full contents and estimated tokens before
+            attaching it.
           </p>
         </>
       )}

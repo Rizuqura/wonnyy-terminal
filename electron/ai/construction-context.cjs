@@ -111,7 +111,7 @@ async function readFile(service, vault, relativePath, expected = null) {
       preview.files[0] !== relativePath
     )
       invalid(
-        "Choose one readable Markdown, CSV or text-PDF file inside the active vault.",
+        "Choose one readable Markdown, CSV, PDF or PNG/JPG/JPEG OCR file inside the active vault.",
       );
     const reviewed = await readManifest(
       service,

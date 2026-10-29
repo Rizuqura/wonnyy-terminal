@@ -47,8 +47,8 @@ export function DocumentWorkspace({
                 Select a file<span> — from your knowledge vault</span>
               </h1>
               <p>
-                Open a <b>.md</b>, <b>.csv</b>, or <b>.pdf</b> file from the
-                left sidebar to read it here.
+                Open a <b>.md</b>, <b>.csv</b>, <b>.pdf</b>, <b>.png</b> or{" "}
+                <b>.jpg/.jpeg</b> file from the left sidebar to read it here.
               </p>
             </header>
           </div>
@@ -57,6 +57,66 @@ export function DocumentWorkspace({
     );
 
   const segments = file.relativePath.split(/[\\/]+/);
+  if ("image" in file && file.image)
+    return (
+      <section className="document-pane document-pane-image">
+        <div className="tab-strip">
+          <button className="active-tab" title={file.relativePath}>
+            {file.name}
+          </button>
+          <button
+            className="tab-close"
+            aria-label="Close document"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        <div className="pdf-ai-context">
+          <button
+            onClick={onAddToContext}
+            disabled={
+              contextBusy ||
+              contextApproved ||
+              file.image.textStatus !== "ready"
+            }
+          >
+            {contextApproved
+              ? "IMAGE IN ACTIVE CONTEXT"
+              : "ADD IMAGE TEXT TO AI CONTEXT"}
+          </button>
+          <p>
+            {file.image.textStatus === "ready"
+              ? "Local OCR text is available for review and token estimation. Verify it against the image; charts and photos are not visually interpreted."
+              : "No readable text was detected. This image cannot provide textual evidence."}
+          </p>
+          {contextError && <p role="alert">{contextError}</p>}
+        </div>
+        <article className="document-scroll">
+          <div className="document-inner">
+            <img
+              src={file.image.dataUrl}
+              alt={file.name}
+              style={{
+                maxWidth: "100%",
+                height: "auto",
+                display: "block",
+                background: "#fff",
+              }}
+            />
+            <details className="image-ocr-text">
+              <summary>
+                Extracted image text
+                {file.image.language ? ` · ${file.image.language}` : ""}
+              </summary>
+              <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                {file.content || "No text detected."}
+              </pre>
+            </details>
+          </div>
+        </article>
+      </section>
+    );
   const isPdf = "data" in file;
   if (isPdf)
     return (
@@ -91,9 +151,10 @@ export function DocumentWorkspace({
           </button>
           <p>
             {file.textStatus === "empty"
-              ? "This PDF has no extractable text. Scanned pages need OCR before the model can read them."
+              ? "No text was detected, including local OCR of scanned pages. This PDF cannot provide textual evidence."
               : file.textStatus === "error"
-                ? "PDF text extraction failed. The preview alone does not make its contents available to the model."
+                ? (file.textError ??
+                  "PDF text extraction failed. The preview alone does not make its contents available to the model.")
                 : "Approve this PDF to ask questions in chat. The model reads extracted text with page references; page images and charts are not sent."}
           </p>
           {contextError && <p role="alert">{contextError}</p>}

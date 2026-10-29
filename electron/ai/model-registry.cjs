@@ -4,6 +4,7 @@ const { ModelRuntimeError } = require("./model-errors.cjs");
 
 const { ProviderRegistry } = require("./provider-registry.cjs");
 const { parse, settingsSchema } = require("./schemas.cjs");
+const { contextLimit } = require("./context-limits.cjs");
 
 const DEFAULTS = Object.freeze({
   schemaVersion: 1,
@@ -163,10 +164,14 @@ class ModelRegistry {
         "MODEL_INVALID_REQUEST",
         "This model does not support text completion.",
       );
-    if (details.contextLength && settings.contextWindow > details.contextLength)
+    const limit = contextLimit(
+      settings.providerId,
+      details.contextLength ?? selected.contextLength,
+    );
+    if (settings.contextWindow > limit)
       throw new ModelRuntimeError(
         "MODEL_CONTEXT_TOO_LARGE",
-        `This model supports at most ${details.contextLength} context tokens.`,
+        `The context window for ${settings.providerId}/${settings.modelId} is limited to ${limit} tokens${details.contextLength || selected.contextLength ? " by model capacity or the application ceiling" : " until the provider reports its capacity"}.`,
       );
     if (details.outputLimit && settings.outputLimit > details.outputLimit)
       throw new ModelRuntimeError(

@@ -33,8 +33,9 @@ export type VaultIssue = {
 export type VaultFile = {
   name: string;
   relativePath: string;
-  extension: ".md" | ".markdown" | ".csv";
+  extension: ".md" | ".markdown" | ".csv" | ".png" | ".jpg" | ".jpeg";
   content: string;
+  image?: { dataUrl: string; textStatus: "ready" | "empty"; language?: string };
 };
 
 export type VaultPdfFile = {
@@ -44,6 +45,7 @@ export type VaultPdfFile = {
   data: Uint8Array;
   textStatus?: "ready" | "empty" | "error" | "too-large";
   pageCount?: number | null;
+  textError?: string;
 };
 
 export type VaultSearchResult = {
@@ -135,7 +137,7 @@ export type BrainSource = {
   id: string;
   relativePath: string;
   name: string;
-  type: "md" | "markdown" | "csv" | "pdf";
+  type: "md" | "markdown" | "csv" | "pdf" | "png" | "jpg" | "jpeg";
   stations: string[];
   estimatedTokens: number;
   contentHash: string | null;

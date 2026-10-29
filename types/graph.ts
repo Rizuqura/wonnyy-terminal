@@ -3,7 +3,7 @@
 // renderer can consume mock data now and a real indexed vault later.
 
 export type NodeType = "directory" | "file";
-export type FileType = "md" | "csv" | "pdf" | "other";
+export type FileType = "md" | "csv" | "pdf" | "image" | "other";
 
 export interface KnowledgeNode {
   id: string;

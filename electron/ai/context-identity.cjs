@@ -1,6 +1,6 @@
 const { createHash } = require("node:crypto");
 const { ModelRuntimeError } = require("./model-errors.cjs");
-const SOURCE_TYPES = ["md", "markdown", "csv", "pdf"];
+const SOURCE_TYPES = ["md", "markdown", "csv", "pdf", "png", "jpg", "jpeg"];
 function contextIdentity(scope) {
   const input = scope?.sources;
   if (
@@ -25,7 +25,7 @@ function contextIdentity(scope) {
   )
     throw new ModelRuntimeError(
       "MODEL_CONTEXT_INVALID",
-      "Use 1 to 32 available Markdown, CSV or text-PDF files in the selected Context Box or explicitly reviewed Active Context.",
+      "Use 1 to 32 available Markdown, CSV, PDF or image OCR files in the selected Context Box or explicitly reviewed Active Context.",
     );
   const sources = input
     .map((source) => ({

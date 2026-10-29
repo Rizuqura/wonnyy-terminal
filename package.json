@@ -40,7 +40,10 @@
     "test:box-agents:electron": "npm run build && node scripts/electron-box-agents-smoke.cjs",
     "test:add-agent:electron": "npm run build && node scripts/electron-add-agent-smoke.cjs",
     "test:single-file:electron": "npm run build && node scripts/electron-single-file-smoke.cjs",
-    "test:message-retry:electron": "npm run build && node scripts/electron-message-retry-smoke.cjs"
+    "test:message-retry:electron": "npm run build && node scripts/electron-message-retry-smoke.cjs",
+    "test:pdf-image:electron": "npm run build && node scripts/electron-pdf-image-smoke.cjs",
+    "test:runtime-kernel:electron": "npm run build && node scripts/electron-runtime-kernel-smoke.cjs",
+    "report:runtime-kernel": "node scripts/runtime-kernel-report.cjs"
   },
   "dependencies": {
     "next": "^16.0.0",
@@ -66,6 +69,9 @@
     "wait-on": "^8.0.0"
   },
   "build": {
+    "asarUnpack": [
+      "electron/windows-ocr.ps1"
+    ],
     "appId": "com.wonnyy.amadeus",
     "productName": "QTerminal",
     "files": [

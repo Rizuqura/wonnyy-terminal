@@ -13,6 +13,7 @@ const { createDatasetSession } = require("./dataset-session.cjs");
 const { planDataset } = require("./dataset-planner.cjs");
 const { inspectDatasetAnswer } = require("./dataset-evidence.cjs");
 const { planStatistics, wantsStatistics } = require("./statistics.cjs");
+const { selectRuntimeSources } = require("./runtime-context.cjs");
 
 const ANSWER_FORMAT = Object.freeze({
   type: "object",
@@ -375,6 +376,20 @@ function createContextOrchestrator({
             },
           });
         }
+        const policySelection = selectRuntimeSources({
+          sources,
+          userMessage: request.userMessage,
+          history: request.history,
+          agentId: options.agentConfig?.id,
+        });
+        sources.splice(0, sources.length, ...policySelection.sources);
+        diagnostics.compactedPolicySources = policySelection.compacted;
+        const evidenceSources = sourcesActuallyRead.filter((source) =>
+          sources.some((item) => item.sourceId === source.sourceId),
+        );
+        diagnostics.evidenceSourceIds = evidenceSources.map(
+          (source) => source.sourceId,
+        );
         if (sources.every((source) => !source.content.trim())) {
           const answer =
             "CONTEXT INSUFFICIENT\nInsufficient evidence in the active Context Box. The approved sources contain no readable text. Add more context or select a text-based source.";
@@ -478,6 +493,7 @@ function createContextOrchestrator({
           ),
         }));
         const preflight = promptBuilder({
+          policyHistory: request.history,
           customInstructions:
             options.agentConfig?.runtimeInstructions ??
             options.agentConfig?.customInstructions,
@@ -600,6 +616,7 @@ function createContextOrchestrator({
           );
         }
         const base = promptBuilder({
+          policyHistory: request.history,
           customInstructions:
             options.agentConfig?.runtimeInstructions ??
             options.agentConfig?.customInstructions,
@@ -615,6 +632,7 @@ function createContextOrchestrator({
         diagnostics.droppedExchanges += options.earlierExchangesDropped ?? 0;
         diagnostics.includedExchanges = budget.history.length / 2;
         const prompt = promptBuilder({
+          policyHistory: request.history,
           customInstructions:
             options.agentConfig?.runtimeInstructions ??
             options.agentConfig?.customInstructions,
@@ -627,6 +645,14 @@ function createContextOrchestrator({
           statistics: diagnostics.statistics,
         });
         promptVersion = prompt.promptVersion;
+        diagnostics.runtimePolicy = {
+          ...prompt.runtimePolicy,
+          compactedPolicySources: policySelection.compacted,
+          systemCharacters: prompt.messages[0].content.length,
+          estimatedSystemTokens: Math.ceil(
+            Buffer.byteLength(prompt.messages[0].content, "utf8") / 3,
+          ),
+        };
         options.onEvent?.({
           state: "CONTEXT_READY",
           status: {
@@ -676,7 +702,7 @@ function createContextOrchestrator({
             response,
             request.userMessage,
             request.history,
-            sourcesActuallyRead,
+            evidenceSources,
           );
           diagnostics.citedSourceIds =
             JSON.parse(response.content).citations ?? [];
@@ -758,6 +784,7 @@ function createContextOrchestrator({
           diagnostics.includedExchanges = repairBudget.history.length / 2;
           const repairedMessages = withCorrection(
             promptBuilder({
+              policyHistory: request.history,
               customInstructions:
                 options.agentConfig?.runtimeInstructions ??
                 options.agentConfig?.customInstructions,

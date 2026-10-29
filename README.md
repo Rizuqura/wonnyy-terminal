@@ -1,5 +1,7 @@
 # QTerminal 1.0.0 Victoria
 
+Wonnyy's policy now uses a versioned **canonical policy → compact runtime kernel → on-demand guidance** pipeline. The known v1.1 policy is compiled by content hash for ordinary research; policy-document questions keep the full text. Existing source bindings and ordinary agent guidance are preserved. See the [runtime policy handoff](big-context/feature/runtime-context-handoff.md), `npm run report:runtime-kernel` and `npm run test:runtime-kernel:electron`.
+
 Agent construction now accepts **Single file** as well as **Context Box** for each non-LLM node. In an agent's **⋯** settings, select a node, choose the source method, review the full vault file and its estimated tokens, then **Use reviewed file → Save & apply**. Supported files are Markdown, CSV and extracted PDF text. Context/Knowledge files are explicitly confirmed when creating a chat. See the [single-file handoff](big-context/feature/single-file-agent-handoff.md) and `npm run test:single-file:electron`.
 
 Use **Agent → + Add agent** to create your own agent. Each starts like an unconfigured CHronoZ: no profile image, custom instructions, skills or bound Context Boxes. A letter placeholder identifies the contact until you upload a PFP. Open its **⋯** menu to configure construction, Context Boxes and appearance; chats and drafts stay separate by agent. See the [Add agent handoff](big-context/feature/add-agent-handoff.md) and `npm run test:add-agent:electron`.

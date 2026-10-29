@@ -3,10 +3,13 @@ import type { KnowledgeNode, PlanetEdge, PlanetGraph } from "../types/graph";
 
 // Build the Planet View graph from the real indexed vault (the /bank folder
 // structure). Falls back to the mock graph when the desktop bridge is absent.
-export function buildGraphFromVault(snapshot: VaultSnapshot): PlanetGraph | null {
+export function buildGraphFromVault(
+  snapshot: VaultSnapshot,
+): PlanetGraph | null {
   if (snapshot.status !== "ready") return null;
 
-  const rootName = snapshot.rootPath.split(/[\\/]/).filter(Boolean).pop() ?? "VAULT";
+  const rootName =
+    snapshot.rootPath.split(/[\\/]/).filter(Boolean).pop() ?? "VAULT";
   const rootId = snapshot.rootPath;
   const nodes: KnowledgeNode[] = [];
   const edges: PlanetEdge[] = [];
@@ -22,7 +25,11 @@ export function buildGraphFromVault(snapshot: VaultSnapshot): PlanetGraph | null
   };
   nodes.push(root);
 
-  const walk = (entries: VaultEntry[], parentId: string, level: number): void => {
+  const walk = (
+    entries: VaultEntry[],
+    parentId: string,
+    level: number,
+  ): void => {
     for (const entry of entries) {
       const isDir = entry.kind === "folder";
       const fileType =
@@ -32,7 +39,11 @@ export function buildGraphFromVault(snapshot: VaultSnapshot): PlanetGraph | null
             ? "pdf"
             : entry.extension === ".md" || entry.extension === ".markdown"
               ? "md"
-              : isDir ? undefined : "other";
+              : [".png", ".jpg", ".jpeg"].includes(entry.extension ?? "")
+                ? "image"
+                : isDir
+                  ? undefined
+                  : "other";
       const node: KnowledgeNode = {
         id: entry.relativePath,
         name: entry.name,

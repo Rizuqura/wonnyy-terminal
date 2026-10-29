@@ -9,6 +9,21 @@
   --ui-text: #dbe3ed;
   --ui-muted: #94a3b5;
 }
+.document-pane-image {
+  grid-template-rows: 42px auto minmax(0, 1fr);
+}
+.document-pane-image .document-inner {
+  width: calc(100% - 40px);
+  padding: 20px 0 40px;
+}
+.image-ocr-text {
+  margin-top: 16px;
+  color: #adbdce;
+  font: 12px/1.6 var(--font-terminal);
+}
+.image-ocr-text summary {
+  cursor: pointer;
+}
 * {
   scrollbar-width: thin;
   scrollbar-color: #3b4b59 #0e151e;

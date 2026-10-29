@@ -4,11 +4,22 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { cmapPdf } = require("../scripts/fixtures/cmap-pdf.cjs");
-const { MAX_PDF_BYTES, readPdfFile, readVaultFile, resolveVaultFile, scanVault, searchPdfText } = require("./vault-service.cjs");
+const {
+  MAX_PDF_BYTES,
+  readPdfFile,
+  readVaultFile,
+  resolveVaultFile,
+  scanVault,
+  searchPdfText,
+} = require("./vault-service.cjs");
 
 async function withVault(run) {
   const vaultPath = await fs.mkdtemp(path.join(os.tmpdir(), "wonnyy-vault-"));
-  try { await run(vaultPath); } finally { await fs.rm(vaultPath, { recursive: true, force: true }); }
+  try {
+    await run(vaultPath);
+  } finally {
+    await fs.rm(vaultPath, { recursive: true, force: true });
+  }
 }
 
 function minimalPdf(text) {
@@ -28,7 +39,10 @@ function minimalPdf(text) {
   }
   const xrefOffset = Buffer.byteLength(document);
   document += `xref\n0 ${bodies.length + 1}\n0000000000 65535 f \n`;
-  document += offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  document += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("");
   document += `trailer\n<< /Size ${bodies.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
   return Buffer.from(document, "binary");
 }
@@ -38,18 +52,26 @@ test("scanVault recursively returns supported files and folders", async () => {
     await fs.mkdir(path.join(vaultPath, "research"));
     await fs.writeFile(path.join(vaultPath, "research", "note.md"), "# Note");
     await fs.writeFile(path.join(vaultPath, "data.csv"), "name\nWonnyy");
-    await fs.writeFile(path.join(vaultPath, "report.pdf"), minimalPdf("Revenue outlook"));
-    await fs.writeFile(path.join(vaultPath, "image.png"), "not indexed");
+    await fs.writeFile(
+      path.join(vaultPath, "report.pdf"),
+      minimalPdf("Revenue outlook"),
+    );
+    await fs.writeFile(path.join(vaultPath, "image.bmp"), "not indexed");
     const snapshot = await scanVault(vaultPath);
     assert.equal(snapshot.status, "ready");
     assert.equal(snapshot.totalFiles, 3);
     assert.equal(snapshot.totalDirectories, 1);
-    const image = snapshot.entries.find((entry) => entry.name === "image.png");
+    const image = snapshot.entries.find((entry) => entry.name === "image.bmp");
     assert.equal(image?.readable, false);
-    const report = snapshot.entries.find((entry) => entry.name === "report.pdf");
+    const report = snapshot.entries.find(
+      (entry) => entry.name === "report.pdf",
+    );
     assert.equal(report?.pdf?.textStatus, "ready");
     assert.equal(searchPdfText(vaultPath, "revenue")[0]?.matchCount, 1);
-    await fs.writeFile(path.join(vaultPath, "report.pdf"), minimalPdf("Margin outlook"));
+    await fs.writeFile(
+      path.join(vaultPath, "report.pdf"),
+      minimalPdf("Margin outlook"),
+    );
     await scanVault(vaultPath);
     assert.equal(searchPdfText(vaultPath, "revenue").length, 0);
     assert.equal(searchPdfText(vaultPath, "margin")[0]?.matchCount, 1);
@@ -59,15 +81,48 @@ test("scanVault recursively returns supported files and folders", async () => {
   });
 });
 
+test("a transient PDF indexing failure recovers without editing or renaming the file", async () => {
+  await withVault(async (root) => {
+    const target = path.join(root, "retry.pdf");
+    await fs.writeFile(target, minimalPdf("Recovered PDF tokens"));
+    const original = fs.readFile;
+    let fail = true;
+    fs.readFile = async (file, ...args) => {
+      if (file === target && fail) {
+        fail = false;
+        throw new Error("Synthetic transient read failure");
+      }
+      return original(file, ...args);
+    };
+    try {
+      assert.equal((await scanVault(root)).entries[0].pdf.textStatus, "error");
+    } finally {
+      fs.readFile = original;
+    }
+    const { readIndexedPdfText } = require("./vault-service.cjs");
+    assert.match(
+      await readIndexedPdfText(root, "retry.pdf"),
+      /Recovered PDF tokens/,
+    );
+    assert.equal((await scanVault(root)).entries[0].pdf.textStatus, "ready");
+  });
+});
+
 test("readVaultFile stays inside the vault and PDF reads are binary", async () => {
   await withVault(async (vaultPath) => {
     await fs.writeFile(path.join(vaultPath, "note.md"), "# Safe");
-    await fs.writeFile(path.join(vaultPath, "report.pdf"), minimalPdf("Binary PDF"));
+    await fs.writeFile(
+      path.join(vaultPath, "report.pdf"),
+      minimalPdf("Binary PDF"),
+    );
     const file = await readVaultFile(vaultPath, "note.md");
     const pdf = await readPdfFile(vaultPath, "report.pdf");
     assert.equal(file.content, "# Safe");
     assert.equal(pdf.data instanceof Uint8Array, true);
-    assert.throws(() => resolveVaultFile(vaultPath, "..\\outside.md"), /outside the active vault/);
+    assert.throws(
+      () => resolveVaultFile(vaultPath, "..\\outside.md"),
+      /outside the active vault/,
+    );
   });
 });
 
@@ -84,21 +139,37 @@ test("PDFs above the configured limit are visible but cannot be read or indexed"
 });
 
 test("overlapping scans share work and keep same-named PDFs isolated by vault", async () => {
-  await withVault(async (alpha) => withVault(async (beta) => {
-    await fs.writeFile(path.join(alpha, "report.pdf"), minimalPdf("ALPHA research"));
-    await fs.writeFile(path.join(beta, "report.pdf"), minimalPdf("BETA research"));
-    const first = scanVault(alpha);
-    assert.equal(scanVault(alpha), first, "Concurrent callers must share the same scan");
-    const [a, b] = await Promise.all([first, scanVault(beta)]);
-    assert.equal(a.entries[0].pdf.textStatus, "ready");
-    assert.equal(b.entries[0].pdf.textStatus, "ready");
-    assert.equal(searchPdfText(alpha, "ALPHA").length, 1);
-    assert.equal(searchPdfText(alpha, "BETA").length, 0);
-    assert.equal(searchPdfText(beta, "BETA").length, 1);
-    assert.equal(searchPdfText(beta, "ALPHA").length, 0);
-    await fs.writeFile(path.join(alpha, "updated.md"), "Fresh scan");
-    assert.equal((await scanVault(alpha)).totalFiles, 2, "Completed snapshots must not be cached indefinitely");
-  }));
+  await withVault(async (alpha) =>
+    withVault(async (beta) => {
+      await fs.writeFile(
+        path.join(alpha, "report.pdf"),
+        minimalPdf("ALPHA research"),
+      );
+      await fs.writeFile(
+        path.join(beta, "report.pdf"),
+        minimalPdf("BETA research"),
+      );
+      const first = scanVault(alpha);
+      assert.equal(
+        scanVault(alpha),
+        first,
+        "Concurrent callers must share the same scan",
+      );
+      const [a, b] = await Promise.all([first, scanVault(beta)]);
+      assert.equal(a.entries[0].pdf.textStatus, "ready");
+      assert.equal(b.entries[0].pdf.textStatus, "ready");
+      assert.equal(searchPdfText(alpha, "ALPHA").length, 1);
+      assert.equal(searchPdfText(alpha, "BETA").length, 0);
+      assert.equal(searchPdfText(beta, "BETA").length, 1);
+      assert.equal(searchPdfText(beta, "ALPHA").length, 0);
+      await fs.writeFile(path.join(alpha, "updated.md"), "Fresh scan");
+      assert.equal(
+        (await scanVault(alpha)).totalFiles,
+        2,
+        "Completed snapshots must not be cached indefinitely",
+      );
+    }),
+  );
 });
 
 test("PDF indexing loads local character maps for non-embedded composite fonts", async () => {
@@ -110,7 +181,6 @@ test("PDF indexing loads local character maps for non-embedded composite fonts",
     assert.deepEqual(snapshot.issues, []);
   });
 });
-
 
 test("snapshot reads reuse the scan until explicit refresh and report missing vaults distinctly", async () => {
   const { getVaultSnapshot } = require("./vault-service.cjs");
@@ -127,7 +197,6 @@ test("snapshot reads reuse the scan until explicit refresh and report missing va
   });
 });
 
-
 test("Brain Scope reuses scan metadata but still rejects changed sources", async () => {
   const stations = require("./station-service.cjs");
   await withVault(async (root) => {
@@ -135,26 +204,53 @@ test("Brain Scope reuses scan metadata but still rejects changed sources", async
     await stations.addContext(root, ["source.md"]);
     const originalReadDir = fs.readdir;
     let scans = 0;
-    fs.readdir = async (...args) => { scans++; return originalReadDir(...args); };
+    fs.readdir = async (...args) => {
+      scans++;
+      return originalReadDir(...args);
+    };
     try {
-      const scope = await stations.prepareBrainScope(root, { ownerId: "runtime-test", activeStationIds: [], matchMode: "any" });
-      const input = { ownerId: "runtime-test", scopeId: scope.id, sourceId: "source.md" };
-      assert.equal((await stations.readBrainSource(root, input)).content, "Approved text");
+      const scope = await stations.prepareBrainScope(root, {
+        ownerId: "runtime-test",
+        activeStationIds: [],
+        matchMode: "any",
+      });
+      const input = {
+        ownerId: "runtime-test",
+        scopeId: scope.id,
+        sourceId: "source.md",
+      };
+      assert.equal(
+        (await stations.readBrainSource(root, input)).content,
+        "Approved text",
+      );
       await fs.writeFile(path.join(root, "source.md"), "Changed text");
-      await assert.rejects(stations.readBrainSource(root, input), { code: "BRAIN_SOURCE_CHANGED" });
+      await assert.rejects(stations.readBrainSource(root, input), {
+        code: "BRAIN_SOURCE_CHANGED",
+      });
       assert.equal(scans, 0);
-    } finally { fs.readdir = originalReadDir; }
+    } finally {
+      fs.readdir = originalReadDir;
+    }
   });
 });
-
 
 test("PDF extraction preserves page boundaries and lines without treating empty pages as evidence", async () => {
   const { textPdf } = require("../scripts/fixtures/text-pdf.cjs");
   const { readIndexedPdfText } = require("./vault-service.cjs");
   await withVault(async (root) => {
-    await fs.writeFile(path.join(root, "report.pdf"), textPdf([["Revenue was 120 million.", "Costs were 80 million."], [], ["Profit was 40 million."]]));
+    await fs.writeFile(
+      path.join(root, "report.pdf"),
+      textPdf([
+        ["Revenue was 120 million.", "Costs were 80 million."],
+        [],
+        ["Profit was 40 million."],
+      ]),
+    );
     const text = await readIndexedPdfText(root, "report.pdf");
-    assert.match(text, /\[PDF page 1\]\nRevenue was 120 million\.\nCosts were 80 million\./);
+    assert.match(
+      text,
+      /\[PDF page 1\]\nRevenue was 120 million\.\nCosts were 80 million\./,
+    );
     assert.match(text, /\[PDF page 2\]\n\[No extractable text/);
     assert.match(text, /\[PDF page 3\]\nProfit was 40 million\./);
     assert.equal((await readPdfFile(root, "report.pdf")).textStatus, "ready");

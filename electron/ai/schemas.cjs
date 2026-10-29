@@ -1,5 +1,9 @@
 const { z } = require("zod");
 const { ModelRuntimeError } = require("./model-errors.cjs");
+const {
+  LOCAL_CONTEXT_LIMIT,
+  REMOTE_CONTEXT_LIMIT,
+} = require("./context-limits.cjs");
 
 // Never serialize Zod issues: their inputs may contain credentials.
 function parse(
@@ -45,7 +49,7 @@ const settingsSchema = z
     schemaVersion: z.literal(1),
     providerId,
     modelId: z.string().min(1).max(200).nullable(),
-    contextWindow: z.number().int().min(2048).max(32768),
+    contextWindow: z.number().int().min(2048).max(REMOTE_CONTEXT_LIMIT),
     outputLimit: z.number().int().min(128).max(8192),
     temperature: z.number().min(0).max(2),
     streaming: z.boolean(),
@@ -55,7 +59,10 @@ const settingsSchema = z
     absoluteTimeoutMs: z.number().int().min(1000).max(1800000),
   })
   .strict()
-  .refine((v) => v.outputLimit + 512 < v.contextWindow);
+  .refine((v) => v.outputLimit + 512 < v.contextWindow)
+  .refine(
+    (v) => v.providerId !== "ollama" || v.contextWindow <= LOCAL_CONTEXT_LIMIT,
+  );
 const geminiModel = z.object({
   name: z
     .string()

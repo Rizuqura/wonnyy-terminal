@@ -88,9 +88,7 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: "#0a0d0e",
     title: "QTerminal",
-    icon: nativeImage.createFromPath(
-      path.join(__dirname, "..", "build", "icon.png"),
-    ),
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -202,45 +200,33 @@ app.whenReady().then(() => {
     nativeImage.createFromBuffer(bytes),
   );
   chatService = new ChatService({ provider, registry, agents });
-  const chooseAgentPicture = async (kind) => {
-    const result = await dialog.showOpenDialog({
-      title:
-        kind === "avatar"
-          ? "Choose agent profile picture"
-          : kind === "banner"
-            ? "Choose profile banner"
-            : "Choose chat wallpaper",
-      properties: ["openFile"],
-      filters: [
-        {
-          name: "Images",
-          extensions: ["png", "jpg", "jpeg", "webp"],
-        },
-      ],
-    });
-    if (result.canceled || !result.filePaths[0]) return null;
-    const file = result.filePaths[0],
-      fs = require("node:fs/promises");
-    const stat = await fs.stat(file);
-    if (!stat.isFile() || stat.size > 5 * 1024 * 1024)
-      throw new ModelRuntimeError(
-        "MODEL_INVALID_REQUEST",
-        "Choose an image up to 5 MB.",
-      );
-    return (
-      kind === "avatar"
-        ? agents.prepareAvatar.bind(agents)
-        : (bytes, extension) => agents.prepareBackdrop(bytes, extension, kind)
-    )(await fs.readFile(file), path.extname(file).toLowerCase());
-  };
   registerAiIpc({
-    researchKnowledge:
-      new (require("./ai/research-knowledge.cjs").ResearchKnowledge)(
-        app.getPath("userData"),
-      ),
     agents,
-    chooseAvatar: () => chooseAgentPicture("avatar"),
-    chooseBackdrop: (kind) => chooseAgentPicture(kind),
+    chooseAvatar: async () => {
+      const result = await dialog.showOpenDialog({
+        title: "Choose agent profile picture",
+        properties: ["openFile"],
+        filters: [
+          {
+            name: "Profile pictures",
+            extensions: ["png", "jpg", "jpeg", "webp"],
+          },
+        ],
+      });
+      if (result.canceled || !result.filePaths[0]) return null;
+      const file = result.filePaths[0],
+        fs = require("node:fs/promises");
+      const stat = await fs.stat(file);
+      if (!stat.isFile() || stat.size > 5 * 1024 * 1024)
+        throw new ModelRuntimeError(
+          "MODEL_INVALID_REQUEST",
+          "Choose a profile picture up to 5 MB.",
+        );
+      return agents.prepareAvatar(
+        await fs.readFile(file),
+        path.extname(file).toLowerCase(),
+      );
+    },
     credentials,
     ipcMain,
     getVault: () => activeVaultPath,

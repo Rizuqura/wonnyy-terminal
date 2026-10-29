@@ -12,6 +12,104 @@ const { budgetHistory } = require("./history-budget.cjs");
 const { answerPrefix, validateAnswer } = require("./response-validation.cjs");
 
 const scopeInput = { activeStationIds: [], matchMode: "any" };
+test("runtime kernel compacts the known policy while keeping bindings, ordinary guidance and run provenance", async (t) => {
+  const f = await studioFixture(t);
+  const { canonical, canonicalHash } = require("./runtime-context.cjs");
+  await fs.writeFile(path.join(f.root, "policy.md"), canonical);
+  const box = await f.service.editBox(f.root, {
+    action: "create",
+    name: "Policy plus research",
+    paths: ["policy.md", "a.md"],
+  });
+  const chat = await f.service.create(f.root, {
+    contextBoxId: box.id,
+    creationId: randomUUID(),
+  });
+  const before = structuredClone(chat.contextIdentity);
+  const result = await f.service.run(
+    f.root,
+    1,
+    f.input(chat, { userMessage: "What is ALPHA's allocation?" }),
+  );
+  const request = f.calls.at(-1);
+  assert.doesNotMatch(
+    JSON.stringify(request.messages),
+    /## 30\. FINAL OPERATING PRINCIPLES/,
+  );
+  assert.deepEqual(result.run.diagnostics.evidenceSourceIds, ["a.md"]);
+  assert.equal(
+    result.run.diagnostics.runtimePolicy.canonicalHash,
+    canonicalHash,
+  );
+  assert.equal(
+    result.run.diagnostics.compactedPolicySources[0].relativePath,
+    "policy.md",
+  );
+  assert.deepEqual(result.conversation.contextIdentity, before);
+  assert.deepEqual(
+    result.run.sourcesActuallyRead.map((s) => s.relativePath),
+    ["a.md", "policy.md"],
+  );
+  assert.deepEqual(
+    (await f.service.inspectBox(f.root, box.id)).items.map(
+      (s) => s.relativePath,
+    ),
+    ["a.md", "policy.md"],
+  );
+  await f.registry.save({ contextWindow: 32768 });
+  const document = await f.service.run(
+    f.root,
+    1,
+    f.input(result.conversation, {
+      userMessage: "Summarize section 17 of the policy.",
+    }),
+  );
+  assert.match(
+    JSON.stringify(f.calls.at(-1).messages),
+    /## 30\. FINAL OPERATING PRINCIPLES/,
+  );
+  assert.deepEqual(document.run.diagnostics.compactedPolicySources, []);
+});
+
+test("a model cannot cite a compacted policy as current documentary evidence", async (t) => {
+  const f = await fixture(t);
+  const { canonical } = require("./runtime-context.cjs");
+  await fs.writeFile(path.join(f.root, "policy.md"), canonical);
+  const box = await f.service.editBox(f.root, {
+    action: "create",
+    name: "Research",
+    paths: ["policy.md", "a.md"],
+  });
+  const chat = await f.service.create(f.root, {
+    contextBoxId: box.id,
+    creationId: randomUUID(),
+  });
+  f.provider.complete = async () => ({
+    model: "qwen3:4b",
+    provider: "ollama",
+    content: JSON.stringify({
+      answer: "ALPHA allocation is 25%.",
+      citations: ["policy.md"],
+    }),
+    finishReason: "stop",
+    usage: null,
+  });
+  await assert.rejects(
+    f.service.run(
+      f.root,
+      1,
+      f.input(chat, { userMessage: "What is ALPHA's allocation?" }),
+    ),
+    { code: "MODEL_INVALID_RESPONSE" },
+  );
+  assert.equal(
+    (await f.service.list(f.root))[0].messages.filter(
+      (m) => m.role === "assistant",
+    ).length,
+    0,
+  );
+});
+
 test("direct file guidance uses the entire reviewed document without creating a hidden box or session", async (t) => {
   const f = await studioFixture(t),
     agent = await f.service.agents.get(),

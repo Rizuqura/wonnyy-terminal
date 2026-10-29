@@ -1,11 +1,26 @@
 const fs = require("fs/promises");
 const path = require("path");
 
-const SUPPORTED_EXTENSIONS = new Set([".md", ".markdown", ".csv", ".pdf"]);
+const SUPPORTED_EXTENSIONS = new Set([
+  ".md",
+  ".markdown",
+  ".csv",
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg"]);
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const { recognizeFile } = require("./local-ocr.cjs");
+const imageIndexes = new Map();
+const pdfOcrJobs = new Map();
 const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".csv"]);
 const IGNORED_DIRECTORIES = new Set([".git", ".wonnyy", "node_modules"]);
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
-const PDFJS_DIRECTORY = path.dirname(require.resolve("pdfjs-dist/package.json"));
+const PDFJS_DIRECTORY = path.dirname(
+  require.resolve("pdfjs-dist/package.json"),
+);
 
 let pdfjsPromise;
 const pdfIndexes = new Map();
@@ -14,14 +29,135 @@ const snapshots = new Map();
 async function getVaultSnapshot(rootPath) {
   const key = await fs.realpath(rootPath).catch(() => null);
   if (!key) return scanVault(rootPath);
-  return activeScans.get(path.resolve(rootPath)) ?? activeScans.get(key) ?? snapshots.get(key) ?? scanVault(key);
+  return (
+    activeScans.get(path.resolve(rootPath)) ??
+    activeScans.get(key) ??
+    snapshots.get(key) ??
+    scanVault(key)
+  );
 }
 async function readIndexedPdfText(rootPath, relativePath) {
-  const { absolutePath, stats } = await statVaultFile(rootPath, relativePath, ".pdf");
+  const { absolutePath, stats } = await statVaultFile(
+    rootPath,
+    relativePath,
+    ".pdf",
+  );
   const issues = [];
   await indexPdf(rootPath, absolutePath, relativePath, stats, issues);
-  if (issues.length) throw new Error(issues[0].message);
+  const record = pdfIndexForRoot(rootPath).get(relativePath);
+  if (
+    record &&
+    !record.ocrAttempted &&
+    (!record.ocrRetryAt || Date.now() >= record.ocrRetryAt) &&
+    (record.error || record.pageTexts?.some((text) => !text.trim()))
+  ) {
+    const missing = record.error
+      ? []
+      : record.pageTexts.flatMap((text, index) =>
+          text.trim() ? [] : [index + 1],
+        );
+    try {
+      const key = `${absolutePath}:${stats.size}:${stats.mtimeMs}`;
+      if (!pdfOcrJobs.has(key))
+        pdfOcrJobs.set(
+          key,
+          recognizePdfPages(absolutePath, missing).finally(() =>
+            pdfOcrJobs.delete(key),
+          ),
+        );
+      const recognized = await pdfOcrJobs.get(key);
+      const pages =
+        record.pageTexts ??
+        Array.from({ length: recognized.pages.length }, () => "");
+      for (const page of recognized.pages)
+        if (page.text.trim())
+          pages[page.page - 1] =
+            `[OCR extracted text; verify recognition against the page.]\n${page.text}`;
+      record.pageTexts = pages;
+      record.pageCount = pages.length;
+      record.text = formatPdfPages(pages);
+      record.ocrAttempted = true;
+      record.error = null;
+    } catch (error) {
+      if (!record.text) throw error;
+      record.ocrRetryAt = Date.now() + 60000;
+      // Text-bearing pages remain usable when OCR is unavailable for blank pages.
+    }
+  }
+  if (record?.error || (!record && issues.length))
+    throw new Error(record?.error || issues[0].message);
   return getIndexedPdfText(rootPath, relativePath) ?? "";
+}
+function formatPdfPages(pages) {
+  return pages.some((text) => text.trim())
+    ? pages
+        .map(
+          (text, index) =>
+            `[PDF page ${index + 1}]\n${text || "[No extractable text on this page. Page images were not supplied.]"}`,
+        )
+        .join("\n\n")
+    : "";
+}
+async function recognizePdfPages(absolutePath, requested) {
+  const pdfjs = await loadPdfJs();
+  const task = pdfjs.getDocument({
+    data: new Uint8Array(await fs.readFile(absolutePath)),
+    useSystemFonts: true,
+    cMapUrl: path.join(PDFJS_DIRECTORY, "cmaps") + "/",
+    cMapPacked: true,
+    standardFontDataUrl: path.join(PDFJS_DIRECTORY, "standard_fonts") + "/",
+    wasmUrl: path.join(PDFJS_DIRECTORY, "wasm") + "/",
+    useWorkerFetch: false,
+  });
+  let temporary;
+  try {
+    const document = await task.promise;
+    const numbers = requested.length
+      ? requested
+      : Array.from({ length: document.numPages }, (_, i) => i + 1);
+    if (numbers.length > 60)
+      throw new Error(
+        "OCR is limited to 60 scanned pages per document. Split this PDF into smaller files.",
+      );
+    let createCanvas;
+    try {
+      ({ createCanvas } = require("@napi-rs/canvas"));
+    } catch {
+      throw new Error(
+        "The local PDF image renderer is unavailable. Reinstall QTerminal with its PDF rendering dependencies.",
+      );
+    }
+    const os = require("node:os");
+    temporary = await fs.mkdtemp(path.join(os.tmpdir(), "qterminal-pdf-ocr-"));
+    const pages = [];
+    for (const number of numbers) {
+      const page = await document.getPage(number);
+      const original = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({
+        scale: Math.min(1800 / original.width, 2400 / original.height),
+      });
+      const canvas = createCanvas(
+        Math.ceil(viewport.width),
+        Math.ceil(viewport.height),
+      );
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport })
+        .promise;
+      const image = path.join(temporary, `page-${number}.png`);
+      await fs.writeFile(image, canvas.toBuffer("image/png"));
+      const result = await recognizeFile(image);
+      pages.push({ page: number, text: result.pages[0]?.text ?? "" });
+      page.cleanup();
+    }
+    return { pages };
+  } finally {
+    await task.destroy();
+    if (temporary) {
+      const base = path.resolve(require("node:os").tmpdir()) + path.sep;
+      if (!path.resolve(temporary).startsWith(base))
+        throw new Error("Invalid OCR temporary directory.");
+      await fs.rm(temporary, { recursive: true, force: true });
+    }
+  }
 }
 
 function issue(relativePath, message) {
@@ -29,7 +165,8 @@ function issue(relativePath, message) {
 }
 
 function readableError(error) {
-  if (error && error.code === "ENOENT") return "Folder or file no longer exists.";
+  if (error && error.code === "ENOENT")
+    return "Folder or file no longer exists.";
   if (error && error.code === "EACCES") return "Permission was denied.";
   return "Could not read this location.";
 }
@@ -62,7 +199,11 @@ async function extractPdfText(absolutePath) {
     const document = await loadingTask.promise;
     try {
       const pages = [];
-      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      for (
+        let pageNumber = 1;
+        pageNumber <= document.numPages;
+        pageNumber += 1
+      ) {
         const page = await document.getPage(pageNumber);
         const textContent = await page.getTextContent();
         const text = textContent.items
@@ -76,9 +217,8 @@ async function extractPdfText(absolutePath) {
         page.cleanup();
       }
       return {
-        text: pages.some(Boolean)
-          ? pages.map((text, index) => `[PDF page ${index + 1}]\n${text || "[No extractable text on this page. Page images were not supplied.]"}`).join("\n\n")
-          : "",
+        text: formatPdfPages(pages),
+        pageTexts: pages,
         pageCount: document.numPages,
       };
     } finally {
@@ -94,29 +234,54 @@ async function indexPdf(rootPath, absolutePath, relativePath, stats, issues) {
   const existing = pdfTextIndex.get(relativePath);
   if (stats.size > MAX_PDF_BYTES) {
     pdfTextIndex.delete(relativePath);
-    issues.push(issue(relativePath, "PDF exceeds the 100 MB preview and indexing limit."));
+    issues.push(
+      issue(relativePath, "PDF exceeds the 100 MB preview and indexing limit."),
+    );
     return { textStatus: "too-large", pageCount: null };
   }
-  if (existing && existing.size === stats.size && existing.mtimeMs === stats.mtimeMs) {
-    if (existing.error) {
-      issues.push(issue(relativePath, existing.error));
-      return { textStatus: "error", pageCount: null };
-    }
-    return { textStatus: existing.text ? "ready" : "empty", pageCount: existing.pageCount };
+  if (
+    existing &&
+    !existing.error &&
+    existing.size === stats.size &&
+    existing.mtimeMs === stats.mtimeMs
+  ) {
+    return {
+      textStatus: existing.text ? "ready" : "empty",
+      pageCount: existing.pageCount,
+    };
   }
   try {
-    const { text, pageCount } = await extractPdfText(absolutePath);
-    pdfTextIndex.set(relativePath, { size: stats.size, mtimeMs: stats.mtimeMs, text, pageCount });
+    const { text, pageCount, pageTexts } = await extractPdfText(absolutePath);
+    pdfTextIndex.set(relativePath, {
+      size: stats.size,
+      mtimeMs: stats.mtimeMs,
+      text,
+      pageCount,
+      pageTexts,
+    });
     return { textStatus: text ? "ready" : "empty", pageCount };
   } catch {
-    const message = "Could not extract searchable PDF text. The file may still be previewable.";
-    pdfTextIndex.set(relativePath, { size: stats.size, mtimeMs: stats.mtimeMs, text: "", pageCount: null, error: message });
+    const message =
+      "Could not extract searchable PDF text. The file may still be previewable.";
+    pdfTextIndex.set(relativePath, {
+      size: stats.size,
+      mtimeMs: stats.mtimeMs,
+      text: "",
+      pageCount: null,
+      error: message,
+    });
     issues.push(issue(relativePath, message));
     return { textStatus: "error", pageCount: null };
   }
 }
 
-async function scanDirectory(rootPath, directoryPath, relativePath, issues, seenPdfPaths) {
+async function scanDirectory(
+  rootPath,
+  directoryPath,
+  relativePath,
+  issues,
+  seenPdfPaths,
+) {
   let directoryEntries;
   try {
     directoryEntries = await fs.readdir(directoryPath, { withFileTypes: true });
@@ -126,38 +291,86 @@ async function scanDirectory(rootPath, directoryPath, relativePath, issues, seen
   }
 
   const entries = [];
-  for (const entry of directoryEntries.sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of directoryEntries.sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
     if (entry.isSymbolicLink()) continue;
 
     const absolutePath = path.join(directoryPath, entry.name);
     // Vault IDs are portable metadata keys, so always use forward slashes even on Windows.
-    const childRelativePath = path.posix.join(relativePath.replaceAll("\\", "/"), entry.name);
+    const childRelativePath = path.posix.join(
+      relativePath.replaceAll("\\", "/"),
+      entry.name,
+    );
     if (entry.isDirectory()) {
       if (IGNORED_DIRECTORIES.has(entry.name)) continue;
-      const children = await scanDirectory(rootPath, absolutePath, childRelativePath, issues, seenPdfPaths);
-      entries.push({ kind: "folder", name: entry.name, relativePath: childRelativePath, children });
+      const children = await scanDirectory(
+        rootPath,
+        absolutePath,
+        childRelativePath,
+        issues,
+        seenPdfPaths,
+      );
+      entries.push({
+        kind: "folder",
+        name: entry.name,
+        relativePath: childRelativePath,
+        children,
+      });
       continue;
     }
 
     const extension = path.extname(entry.name).toLowerCase();
     if (!entry.isFile()) continue;
     if (!SUPPORTED_EXTENSIONS.has(extension)) {
-      entries.push({ kind: "file", name: entry.name, relativePath: childRelativePath, extension, readable: false });
+      entries.push({
+        kind: "file",
+        name: entry.name,
+        relativePath: childRelativePath,
+        extension,
+        readable: false,
+      });
       continue;
     }
     if (extension === ".pdf") {
       const stats = await fs.stat(absolutePath).catch(() => null);
       if (!stats) {
-        issues.push(issue(childRelativePath, "Could not inspect PDF metadata."));
-        entries.push({ kind: "file", name: entry.name, relativePath: childRelativePath, extension });
+        issues.push(
+          issue(childRelativePath, "Could not inspect PDF metadata."),
+        );
+        entries.push({
+          kind: "file",
+          name: entry.name,
+          relativePath: childRelativePath,
+          extension,
+        });
         continue;
       }
       seenPdfPaths.add(childRelativePath);
-      const pdf = await indexPdf(rootPath, absolutePath, childRelativePath, stats, issues);
-      entries.push({ kind: "file", name: entry.name, relativePath: childRelativePath, extension, readable: true, pdf });
+      const pdf = await indexPdf(
+        rootPath,
+        absolutePath,
+        childRelativePath,
+        stats,
+        issues,
+      );
+      entries.push({
+        kind: "file",
+        name: entry.name,
+        relativePath: childRelativePath,
+        extension,
+        readable: true,
+        pdf,
+      });
       continue;
     }
-    entries.push({ kind: "file", name: entry.name, relativePath: childRelativePath, extension, readable: true });
+    entries.push({
+      kind: "file",
+      name: entry.name,
+      relativePath: childRelativePath,
+      extension,
+      readable: true,
+    });
   }
   return entries;
 }
@@ -165,9 +378,16 @@ async function scanDirectory(rootPath, directoryPath, relativePath, issues, seen
 function countEntries(entries) {
   return entries.reduce(
     (total, entry) => {
-      if (entry.kind === "file") return { ...total, files: total.files + (entry.readable === false ? 0 : 1) };
+      if (entry.kind === "file")
+        return {
+          ...total,
+          files: total.files + (entry.readable === false ? 0 : 1),
+        };
       const nested = countEntries(entry.children);
-      return { files: total.files + nested.files, directories: total.directories + nested.directories + 1 };
+      return {
+        files: total.files + nested.files,
+        directories: total.directories + nested.directories + 1,
+      };
     },
     { files: 0, directories: 0 },
   );
@@ -176,7 +396,12 @@ function countEntries(entries) {
 function scanVault(rootPath) {
   const key = path.resolve(rootPath);
   if (activeScans.has(key)) return activeScans.get(key);
-  const scanning = scanVaultContents(key).then(async (snapshot) => { snapshots.set(await fs.realpath(key).catch(() => key), snapshot); return snapshot; }).finally(() => activeScans.delete(key));
+  const scanning = scanVaultContents(key)
+    .then(async (snapshot) => {
+      snapshots.set(await fs.realpath(key).catch(() => key), snapshot);
+      return snapshot;
+    })
+    .finally(() => activeScans.delete(key));
   activeScans.set(key, scanning);
   return scanning;
 }
@@ -185,56 +410,187 @@ async function scanVaultContents(rootPath) {
   try {
     const stats = await fs.stat(rootPath);
     if (!stats.isDirectory()) {
-      return { status: "unavailable", rootPath, entries: [], totalFiles: 0, totalDirectories: 0, lastScannedAt: null, issues: [], message: "Vault path is not a directory." };
+      return {
+        status: "unavailable",
+        rootPath,
+        entries: [],
+        totalFiles: 0,
+        totalDirectories: 0,
+        lastScannedAt: null,
+        issues: [],
+        message: "Vault path is not a directory.",
+      };
     }
   } catch (error) {
     const missing = error && error.code === "ENOENT";
-    return { status: missing ? "missing" : "unavailable", rootPath, entries: [], totalFiles: 0, totalDirectories: 0, lastScannedAt: null, issues: [], message: missing ? "Vault folder does not exist." : readableError(error) };
+    return {
+      status: missing ? "missing" : "unavailable",
+      rootPath,
+      entries: [],
+      totalFiles: 0,
+      totalDirectories: 0,
+      lastScannedAt: null,
+      issues: [],
+      message: missing ? "Vault folder does not exist." : readableError(error),
+    };
   }
 
   const pdfTextIndex = pdfIndexForRoot(rootPath);
   const issues = [];
   const seenPdfPaths = new Set();
-  const entries = await scanDirectory(rootPath, rootPath, "", issues, seenPdfPaths);
+  const entries = await scanDirectory(
+    rootPath,
+    rootPath,
+    "",
+    issues,
+    seenPdfPaths,
+  );
   if (issues.some((entry) => entry.relativePath === ".")) {
-    return { status: "unavailable", rootPath, entries: [], totalFiles: 0, totalDirectories: 0, lastScannedAt: null, issues, message: "The vault directory could not be scanned. Check folder permissions and try again." };
+    return {
+      status: "unavailable",
+      rootPath,
+      entries: [],
+      totalFiles: 0,
+      totalDirectories: 0,
+      lastScannedAt: null,
+      issues,
+      message:
+        "The vault directory could not be scanned. Check folder permissions and try again.",
+    };
   }
   for (const indexedPath of pdfTextIndex.keys()) {
     if (!seenPdfPaths.has(indexedPath)) pdfTextIndex.delete(indexedPath);
   }
   const { files, directories } = countEntries(entries);
-  return { status: "ready", rootPath, entries, totalFiles: files, totalDirectories: directories, lastScannedAt: new Date().toISOString(), issues };
+  return {
+    status: "ready",
+    rootPath,
+    entries,
+    totalFiles: files,
+    totalDirectories: directories,
+    lastScannedAt: new Date().toISOString(),
+    issues,
+  };
 }
 
 function resolveVaultFile(rootPath, relativePath) {
-  if (typeof relativePath !== "string" || path.isAbsolute(relativePath)) throw new Error("Invalid vault file path.");
+  if (typeof relativePath !== "string" || path.isAbsolute(relativePath))
+    throw new Error("Invalid vault file path.");
   const absolutePath = path.resolve(rootPath, relativePath);
   const pathWithinVault = path.relative(rootPath, absolutePath);
-  if (pathWithinVault.startsWith("..") || path.isAbsolute(pathWithinVault)) throw new Error("File is outside the active vault.");
-  if (!SUPPORTED_EXTENSIONS.has(path.extname(absolutePath).toLowerCase())) throw new Error("This file type is not supported.");
+  if (pathWithinVault.startsWith("..") || path.isAbsolute(pathWithinVault))
+    throw new Error("File is outside the active vault.");
+  if (!SUPPORTED_EXTENSIONS.has(path.extname(absolutePath).toLowerCase()))
+    throw new Error("This file type is not supported.");
   return absolutePath;
 }
 
 async function statVaultFile(rootPath, relativePath, requiredExtension) {
   const absolutePath = resolveVaultFile(rootPath, relativePath);
+  const actualRoot = await fs.realpath(rootPath);
+  const actualPath = await fs.realpath(absolutePath);
+  const within = path.relative(actualRoot, actualPath);
+  if (within.startsWith("..") || path.isAbsolute(within))
+    throw new Error("File is outside the active vault.");
   const extension = path.extname(absolutePath).toLowerCase();
-  if (requiredExtension && extension !== requiredExtension) throw new Error("Selected file is not a PDF.");
-  const stats = await fs.stat(absolutePath).catch((error) => { throw new Error(readableError(error)); });
+  if (requiredExtension && extension !== requiredExtension)
+    throw new Error("Selected file is not a PDF.");
+  const stats = await fs.stat(absolutePath).catch((error) => {
+    throw new Error(readableError(error));
+  });
   if (!stats.isFile()) throw new Error("Selected path is not a file.");
   return { absolutePath, extension, stats };
 }
 
 async function readVaultFile(rootPath, relativePath) {
-  const { absolutePath, extension } = await statVaultFile(rootPath, relativePath);
-  if (!TEXT_EXTENSIONS.has(extension)) throw new Error("Use the PDF reader for this file.");
-  return { name: path.basename(absolutePath), relativePath, extension, content: await fs.readFile(absolutePath, "utf8").catch((error) => { throw new Error(readableError(error)); }) };
+  const { absolutePath, extension } = await statVaultFile(
+    rootPath,
+    relativePath,
+  );
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    const stats = await fs.stat(absolutePath);
+    if (stats.size > MAX_IMAGE_BYTES)
+      throw new Error("Image exceeds the 25 MB preview and OCR limit.");
+    const bytes = await fs.readFile(absolutePath);
+    const digest = require("node:crypto")
+      .createHash("sha256")
+      .update(bytes)
+      .digest("hex");
+    const key = path.resolve(absolutePath);
+    let record = imageIndexes.get(key);
+    if (record?.hash !== digest) {
+      const recognized = await recognizeFile(absolutePath);
+      if (
+        require("node:crypto")
+          .createHash("sha256")
+          .update(await fs.readFile(absolutePath))
+          .digest("hex") !== digest
+      )
+        throw new Error("Image changed during OCR. Review the file again.");
+      const text = recognized.pages[0]?.text.trim() ?? "";
+      record = {
+        hash: digest,
+        content: text
+          ? `[Image OCR text; verify recognition against the original image. Visual chart/photo interpretation is not supplied.]\n${text}`
+          : "",
+        language: recognized.language,
+      };
+      imageIndexes.set(key, record);
+    }
+    return {
+      name: path.basename(absolutePath),
+      relativePath,
+      extension,
+      content: record.content,
+      image: {
+        dataUrl: `data:image/${extension === ".png" ? "png" : "jpeg"};base64,${bytes.toString("base64")}`,
+        textStatus: record.content ? "ready" : "empty",
+        language: record.language,
+      },
+    };
+  }
+  if (!TEXT_EXTENSIONS.has(extension))
+    throw new Error("Use the PDF reader for this file.");
+  return {
+    name: path.basename(absolutePath),
+    relativePath,
+    extension,
+    content: await fs.readFile(absolutePath, "utf8").catch((error) => {
+      throw new Error(readableError(error));
+    }),
+  };
 }
 
 async function readPdfFile(rootPath, relativePath) {
-  const { absolutePath, stats } = await statVaultFile(rootPath, relativePath, ".pdf");
-  if (stats.size > MAX_PDF_BYTES) throw new Error("PDF exceeds the 100 MB preview limit.");
-  const pdf = await indexPdf(rootPath, absolutePath, relativePath, stats, []);
-  return { name: path.basename(absolutePath), relativePath, size: stats.size, ...pdf, data: new Uint8Array(await fs.readFile(absolutePath).catch((error) => { throw new Error(readableError(error)); })) };
+  const { absolutePath, stats } = await statVaultFile(
+    rootPath,
+    relativePath,
+    ".pdf",
+  );
+  if (stats.size > MAX_PDF_BYTES)
+    throw new Error("PDF exceeds the 100 MB preview limit.");
+  let pdf = await indexPdf(rootPath, absolutePath, relativePath, stats, []);
+  try {
+    const text = await readIndexedPdfText(rootPath, relativePath);
+    pdf = {
+      textStatus: text ? "ready" : "empty",
+      pageCount:
+        pdfIndexForRoot(rootPath).get(relativePath)?.pageCount ?? pdf.pageCount,
+    };
+  } catch (error) {
+    pdf = { ...pdf, textStatus: "error", textError: error.message };
+  }
+  return {
+    name: path.basename(absolutePath),
+    relativePath,
+    size: stats.size,
+    ...pdf,
+    data: new Uint8Array(
+      await fs.readFile(absolutePath).catch((error) => {
+        throw new Error(readableError(error));
+      }),
+    ),
+  };
 }
 
 function countMatches(text, query) {
@@ -242,7 +598,10 @@ function countMatches(text, query) {
   let offset = 0;
   while (offset >= 0) {
     offset = text.indexOf(query, offset);
-    if (offset >= 0) { count += 1; offset += query.length; }
+    if (offset >= 0) {
+      count += 1;
+      offset += query.length;
+    }
   }
   return count;
 }
@@ -257,13 +616,35 @@ function searchPdfText(rootPath, rawQuery) {
     const matchAt = normalizedText.indexOf(query);
     if (matchAt < 0) return [];
     const excerptStart = Math.max(0, matchAt - 72);
-    const excerptEnd = Math.min(record.text.length, matchAt + query.length + 108);
-    return [{ relativePath, name: path.basename(relativePath), matchCount: countMatches(normalizedText, query), excerpt: `${excerptStart > 0 ? "…" : ""}${record.text.slice(excerptStart, excerptEnd)}${excerptEnd < record.text.length ? "…" : ""}` }];
+    const excerptEnd = Math.min(
+      record.text.length,
+      matchAt + query.length + 108,
+    );
+    return [
+      {
+        relativePath,
+        name: path.basename(relativePath),
+        matchCount: countMatches(normalizedText, query),
+        excerpt: `${excerptStart > 0 ? "…" : ""}${record.text.slice(excerptStart, excerptEnd)}${excerptEnd < record.text.length ? "…" : ""}`,
+      },
+    ];
   });
 }
 
 function getIndexedPdfText(rootPath, relativePath) {
-  return pdfIndexes.get(path.resolve(rootPath))?.get(relativePath)?.text ?? null;
+  return (
+    pdfIndexes.get(path.resolve(rootPath))?.get(relativePath)?.text ?? null
+  );
 }
 
-module.exports = { getVaultSnapshot, readIndexedPdfText, MAX_PDF_BYTES, getIndexedPdfText, readPdfFile, readVaultFile, resolveVaultFile, scanVault, searchPdfText };
+module.exports = {
+  getVaultSnapshot,
+  readIndexedPdfText,
+  MAX_PDF_BYTES,
+  getIndexedPdfText,
+  readPdfFile,
+  readVaultFile,
+  resolveVaultFile,
+  scanVault,
+  searchPdfText,
+};
