@@ -205,31 +205,39 @@ test("nonstreaming completion preserves visible text and usage without invented 
 test("native experimental gateway uses the NVIDIA deployment thinking switch too", async () => {
   const { NvidiaProvider } = require("./providers/nvidia-provider.cjs");
   const c = config();
-  const model = profile({
-    providerId: "nvidia",
-    modelId: "nvidia/nemotron-3.5-lightning-30b-a3b",
-  });
-  const adapter = new NvidiaProvider({
-    credentials: { get: async () => "synthetic-only" },
-    fetchImpl: async (_, init) => {
-      const body = JSON.parse(init.body);
-      assert.deepEqual(body.chat_template_kwargs, { enable_thinking: false });
-      assert.equal(body.max_tokens, 128);
-      assert.deepEqual(body.messages, [{ role: "user", content: "Hello" }]);
-      return sse(streamEvents());
-    },
-  });
-  const client = createLLMClient({
-    model,
-    transport: "direct",
-    config: c,
-    registry: { providerFor: () => adapter },
-  });
-  assert.equal(
-    (await client.complete({ messages: [{ role: "user", content: "Hello" }] }))
-      .content,
-    "Hello α",
-  );
+  for (const modelId of [
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  ]) {
+    const model = profile({
+      providerId: "nvidia",
+      modelId,
+    });
+    const adapter = new NvidiaProvider({
+      credentials: { get: async () => "synthetic-only" },
+      fetchImpl: async (_, init) => {
+        const body = JSON.parse(init.body);
+        assert.deepEqual(body.chat_template_kwargs, { enable_thinking: false });
+        assert.equal(body.max_tokens, 128);
+        assert.deepEqual(body.messages, [{ role: "user", content: "Hello" }]);
+        return sse(streamEvents());
+      },
+    });
+    const client = createLLMClient({
+      model,
+      transport: "direct",
+      config: c,
+      registry: { providerFor: () => adapter },
+    });
+    assert.equal(
+      (
+        await client.complete({
+          messages: [{ role: "user", content: "Hello" }],
+        })
+      ).content,
+      "Hello α",
+    );
+  }
 });
 
 async function fixture(t, behavior) {

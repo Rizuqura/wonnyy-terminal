@@ -34,16 +34,47 @@ fs.writeFileSync(
 const selected = JSON.parse(
   fs.readFileSync(path.join(source, "model-settings.json"), "utf8"),
 );
+// Pin the diagnostic deployment independently of settings changed in a parallel
+// personal app session. This override affects only the disposable profile.
+const targetModel = process.env.QT_NVIDIA_TEST_MODEL ?? selected.modelId;
+if (
+  ![
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  ].includes(targetModel)
+)
+  throw Error("Explicit supported diagnostic model required");
+selected.modelId = targetModel;
+selected.providerId = "nvidia";
 const credentials = new CredentialStore(isolated, safeStorage);
 const provider = new NvidiaProvider({ credentials });
 // Public deterministic source; approximately 7K+ provider input tokens. The UI
 // runner uses exactly this source too, so input size is measured rather than inferred.
 const sourceText =
+  (process.env.QT_NVIDIA_TEN_POINTS === "1"
+    ? "Synthetic Demo Company FY2025. These are fictional test facts, not GOTO financial results.\n" +
+      [
+        "Revenue: 120 billion rupiah",
+        "Revenue growth: 12%",
+        "Gross profit: 45 billion rupiah",
+        "Operating profit: 8 billion rupiah",
+        "Net profit: 5 billion rupiah",
+        "Operating cash flow: 9 billion rupiah",
+        "Cash balance: 30 billion rupiah",
+        "Total assets: 150 billion rupiah",
+        "Total liabilities: 60 billion rupiah",
+        "Total equity: 90 billion rupiah",
+      ]
+        .map((v, i) => `Financial fact ${i + 1}: ${v}.`)
+        .join("\n") +
+      "\n"
+    : "") +
   Array.from(
     { length: 440 },
     (_, i) =>
       `Archive record ${i}: category alpha; state normal; reference value ${i % 17}.`,
-  ).join("\n") + "\nVerification marker: QTERMINAL_OK.\n";
+  ).join("\n") +
+  "\nVerification marker: QTERMINAL_OK.\n";
 globalThis.nvidiaProbe = {
   selected: {
     modelId: selected.modelId,
@@ -55,7 +86,10 @@ globalThis.nvidiaProbe = {
   async run(disableThinking) {
     if (
       selected.providerId !== "nvidia" ||
-      selected.modelId !== "nvidia/nemotron-3.5-lightning-30b-a3b"
+      ![
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      ].includes(selected.modelId)
     )
       throw Error("Probe is scoped to the reported selected NVIDIA model");
     const started = performance.now();

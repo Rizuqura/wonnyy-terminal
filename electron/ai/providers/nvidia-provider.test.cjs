@@ -76,9 +76,14 @@ const credentials = {
   status: async () => ({ configured: true, secureStorageAvailable: true }),
 };
 
-test("NVIDIA Lightning explicitly disables thinking without changing output caps or other deployments", async () => {
-  for (const model of [
+test("verified NVIDIA instruct modes disable thinking without changing output caps or guessing other deployments", async () => {
+  const supported = [
     "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  ];
+  for (const model of [
+    ...supported,
+    "nvidia/unverified-nemotron-reasoning",
     "deepseek-ai/deepseek-r1",
     "nvidia/test",
   ]) {
@@ -89,9 +94,7 @@ test("NVIDIA Lightning explicitly disables thinking without changing output caps
         assert.equal(body.max_tokens, 6000);
         assert.deepEqual(
           body.chat_template_kwargs,
-          model.includes("nemotron-3.5-lightning")
-            ? { enable_thinking: false }
-            : undefined,
+          supported.includes(model) ? { enable_thinking: false } : undefined,
         );
         return stream([part("QTERMINAL_OK", "stop")]);
       },

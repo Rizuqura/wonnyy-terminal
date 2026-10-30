@@ -1,5 +1,7 @@
 # QT-RCA-002 — Perbaikan respons kosong NVIDIA
 
+Pembaruan berikutnya: [QT-RCA-003](QTerminal_NVIDIA_Omni_Fix_QT-RCA-003.md) menambahkan dukungan Nano Omni. Laporan ini mencatat perbaikan dan pengujian Lightning sebelumnya.
+
 Tanggal: 30 Oktober 2026. Tindak lanjut [laporan pertama](QTerminal_Provider_RCA_QT-RCA-001.md).
 
 ## 1. Insiden aktual

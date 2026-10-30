@@ -12,6 +12,9 @@ async function main() {
     const env = {
       ...process.env,
       QT_NVIDIA_PROBE_PROFILE: path.join(root, "profile"),
+      QT_NVIDIA_TEST_MODEL:
+        process.argv.find((a) => a.startsWith("--model="))?.slice(8) ??
+        process.env.QT_NVIDIA_TEST_MODEL,
     };
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.ELECTRON_START_URL;

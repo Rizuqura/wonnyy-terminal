@@ -6,6 +6,7 @@ const fs = require("node:fs/promises"),
   os = require("node:os");
 const assert = require("node:assert/strict");
 async function main() {
+  const tenPoints = process.argv.includes("--ten-points");
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "qterminal-nvidia-agent-"),
   );
@@ -18,6 +19,10 @@ async function main() {
     const env = {
       ...process.env,
       QT_NVIDIA_UI: "1",
+      QT_NVIDIA_TEST_MODEL:
+        process.argv.find((a) => a.startsWith("--model="))?.slice(8) ??
+        process.env.QT_NVIDIA_TEST_MODEL,
+      QT_NVIDIA_TEN_POINTS: tenPoints ? "1" : "0",
       QT_NVIDIA_PROBE_PROFILE: path.join(root, "profile"),
       WONNYY_VAULT_PATH: path.join(root, "vault"),
     };
@@ -98,14 +103,20 @@ async function main() {
     checkpoint("SEND_REAL_NVIDIA");
     await page
       .getByRole("textbox", { name: "Chat question", exact: true })
-      .fill("From archive.md, give the verification marker only.");
+      .fill(
+        tenPoints
+          ? "Read archive.md and give exactly 10 important points from its ten numbered financial statement facts. Use a numbered list, include the stated values, and do not invent financial information."
+          : "From archive.md, give the verification marker only.",
+      );
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
     // Wait on the actual final answer; an IPC list poll alone is not rendering proof.
-    const bubble = page
-      .locator(".chat-message-assistant")
-      .filter({ hasText: "QTERMINAL_OK" });
+    const bubble = tenPoints
+      ? page.locator(".chat-message-assistant[data-message-id]").last()
+      : page
+          .locator(".chat-message-assistant[data-message-id]")
+          .filter({ hasText: "QTERMINAL_OK" });
     await bubble.waitFor({ state: "visible", timeout: 120000 });
     const conversation = await page.evaluate(
       async () => (await window.wonnyyDesktop.ai.listConversations())[0],
@@ -116,10 +127,35 @@ async function main() {
       attempt.runId,
     );
     const visible = await bubble.isVisible().catch(() => false);
+    const numberedItems = tenPoints
+      ? await bubble.locator(".chat-rich-text ol > li").count()
+      : null;
+    const pointLines = tenPoints
+      ? [
+          ...String(run.response).matchAll(
+            /(?:^|\n)\s*(?:Financial fact\s+)?\d{1,2}[.:)]/gi,
+          ),
+        ].length
+      : 0;
+    const financialPointCount = tenPoints
+      ? Math.max(numberedItems, pointLines)
+      : null;
     const selected = await app.evaluate(() => globalThis.nvidiaProbe.selected);
     const result = {
       capturedAt: new Date().toISOString(),
-      status: attempt.status === "succeeded" && visible ? "PASS" : "FAIL",
+      status:
+        attempt.status === "succeeded" &&
+        visible &&
+        (!tenPoints || financialPointCount === 10) &&
+        run.model === selected.modelId
+          ? "PASS"
+          : "FAIL",
+      task: tenPoints
+        ? "Ten financial statement points from fictional public test facts"
+        : "Verification marker",
+      numberedItems,
+      financialPointCount,
+      ...(tenPoints ? { publicTestAnswer: run.response } : {}),
       selected,
       wireRequests: await app.evaluate(
         () => globalThis.nvidiaProbe.wireRequests,

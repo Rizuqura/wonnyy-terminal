@@ -1,5 +1,7 @@
 # Laporan Audit Provider dan Pipeline LLM QTerminal
 
+**Pembaruan terbaru:** [QT-RCA-003 — Nano Omni](QTerminal_NVIDIA_Omni_Fix_QT-RCA-003.md) memperluas kontrol thinking ke model pada chat Training Unit, memverifikasi jawaban 10 poin lewat Agent Chat, dan menerapkannya ke checkout utama.
+
 **Pembaruan NVIDIA:** [QT-RCA-002](QTerminal_NVIDIA_Thinking_Fix_QT-RCA-002.md) mereproduksi respons kosong akibat thinking, memperbaiki deployment Lightning yang dipakai pengguna, memverifikasi Agent Chat nyata, dan menerapkan perbaikan tersebut ke checkout utama. Hasil di bawah adalah catatan audit pertama.
 
 **Audit:** QT-RCA-001
