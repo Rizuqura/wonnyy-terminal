@@ -52,6 +52,7 @@ const configSchema = z
       .strict(),
     generation: z
       .object({
+        streaming: z.boolean().default(true),
         maxOutputTokens: tokens.max(131072),
         contextWindow: tokens.min(512),
         headroomFraction: finite.max(0.5),

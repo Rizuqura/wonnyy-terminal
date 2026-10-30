@@ -56,12 +56,13 @@ function routeModels(
       reasons.push("Structured output support is false or unknown.");
     if (
       model.supportedParameters &&
-      ["temperature", "max_tokens"].some(
-        (p) => !model.supportedParameters.includes(p),
-      )
+      (!model.supportedParameters.includes("temperature") ||
+        !["max_tokens", "max_completion_tokens"].some((p) =>
+          model.supportedParameters.includes(p),
+        ))
     )
       reasons.push(
-        "A requested generation parameter is not supported by this deployment.",
+        "A requested generation parameter is not supported: temperature and an output cap (max_tokens or max_completion_tokens) are required.",
       );
     if (
       config.routing.mode === "auto" &&

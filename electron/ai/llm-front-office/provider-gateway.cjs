@@ -53,6 +53,7 @@ async function consumeStream(
 ) {
   if (!response.headers.get("content-type")?.includes("text/event-stream"))
     throw invalid();
+  request.onStage?.("STREAM_STARTED", "ok");
   const start = performance.now();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let buffer = "",
@@ -91,6 +92,10 @@ async function consumeStream(
     if (choice?.delta.refusal) refusal = true;
     if (choice?.delta.content) {
       if (finishReason) throw invalid();
+      if (!content)
+        request.onStage?.("FIRST_CONTENT_RECEIVED", "ok", {
+          contentCharacters: choice.delta.content.length,
+        });
       content += choice.delta.content;
       firstTokenMs ??= Math.round(performance.now() - start);
       request.onGenerationStarted?.();
@@ -154,9 +159,98 @@ async function consumeStream(
   }
 }
 
+/** Consume a bounded JSON completion when streaming is disabled. No artificial
+ * content callback/TTFT is generated; the final conversation renders the result. */
+async function consumeCompletion(
+  response,
+  touch,
+  request,
+  providerId,
+  requestedModel,
+) {
+  const started = performance.now();
+  let raw = "",
+    bytes = 0;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    for await (const part of response.body) {
+      bytes += part.byteLength;
+      if (bytes > MAX_STREAM_BYTES) throw invalid();
+      touch();
+      raw += decoder.decode(part, { stream: true });
+    }
+    raw += decoder.decode();
+    const schema = z.object({
+      model: z.string().max(200).optional(),
+      choices: z
+        .array(
+          z.object({
+            message: z.object({
+              content: z
+                .union([
+                  z.string(),
+                  z.array(
+                    z.object({ type: z.string(), text: z.string().optional() }),
+                  ),
+                ])
+                .nullable()
+                .optional(),
+              refusal: z.string().nullable().optional(),
+              tool_calls: z.unknown().optional(),
+            }),
+            finish_reason: z.string().nullable().optional(),
+          }),
+        )
+        .min(1)
+        .max(1),
+      usage: chunkSchema.shape.usage,
+    });
+    const data = parse(schema, JSON.parse(raw), "MODEL_INVALID_RESPONSE");
+    const choice = data.choices[0];
+    if (choice.message.tool_calls) throw invalid();
+    const parts = choice.message.content;
+    const content =
+      typeof parts === "string"
+        ? parts
+        : Array.isArray(parts)
+          ? parts
+              .filter((p) => p.type === "text")
+              .map((p) => p.text ?? "")
+              .join("")
+          : "";
+    if (content)
+      request.onStage?.("FIRST_CONTENT_RECEIVED", "buffered", {
+        contentCharacters: content.length,
+      });
+    return {
+      provider: providerId,
+      model:
+        data.model && modelId.safeParse(data.model).success
+          ? data.model
+          : requestedModel,
+      content,
+      finishReason: choice.message.refusal
+        ? "content_filter"
+        : (choice.finish_reason ?? "unknown"),
+      usage: {
+        promptTokens: data.usage?.prompt_tokens ?? null,
+        completionTokens: data.usage?.completion_tokens ?? null,
+        totalDurationNs: Math.round((performance.now() - started) * 1000000),
+      },
+      reasoningTokens:
+        data.usage?.completion_tokens_details?.reasoning_tokens ?? null,
+      diagnostics: { firstTokenMs: null },
+    };
+  } catch (error) {
+    if (error instanceof ModelRuntimeError || request.signal?.aborted)
+      throw error;
+    throw invalid();
+  }
+}
+
 /** Create an LLMClient for the explicitly permitted endpoint; provider keys stay in the main process. */
 function createLLMClient({ model, transport, config, registry, credentials }) {
-  validateConfig(config);
+  config = validateConfig(config);
   if (transport === "litellm" && !config.gateway.enabled)
     throw new ModelRuntimeError(
       "MODEL_INVALID_REQUEST",
@@ -179,14 +273,21 @@ function createLLMClient({ model, transport, config, registry, credentials }) {
       : model.modelId;
   return {
     /** Perform exactly one inference call with identical A/B messages and generation options. */
-    complete(request) {
+    async complete(request) {
       const g = config.generation;
+      // Provider catalogs may advertise only the canonical completion-cap name.
+      // Preserve the cap using that supported wire keyword, never drop it.
+      const outputParameter =
+        model.supportedParameters?.includes("max_completion_tokens") &&
+        !model.supportedParameters.includes("max_tokens")
+          ? "max_completion_tokens"
+          : "max_tokens";
       const body = {
         model: wireModel,
         messages: request.messages,
         temperature: g.temperature,
-        max_tokens: g.maxOutputTokens,
-        stream: true,
+        [outputParameter]: g.maxOutputTokens,
+        stream: g.streaming,
         ...(g.format === "json"
           ? {
               response_format: g.jsonSchema
@@ -202,23 +303,43 @@ function createLLMClient({ model, transport, config, registry, credentials }) {
             }
           : {}),
       };
-      return adapter.request(
-        "chat/completions",
-        { method: "POST", body: JSON.stringify(body) },
-        (response, touch) =>
-          consumeStream(
-            response,
-            touch,
-            request,
-            model.providerId,
-            model.modelId,
-          ),
-        {
-          signal: request.signal,
-          timeoutMs: config.reliability.deadlineMs,
-          absoluteMs: config.reliability.deadlineMs,
-        },
-      );
+      request.onStage?.("GATEWAY_REQUEST_STARTED", "ok");
+      let received = false;
+      try {
+        const result = await adapter.request(
+          "chat/completions",
+          { method: "POST", body: JSON.stringify(body) },
+          (response, touch) => {
+            received = true;
+            request.onStage?.("PROVIDER_RESPONSE_RECEIVED", "ok", {
+              httpStatus: response.status,
+            });
+            return (g.streaming ? consumeStream : consumeCompletion)(
+              response,
+              touch,
+              request,
+              model.providerId,
+              model.modelId,
+            );
+          },
+          {
+            signal: request.signal,
+            timeoutMs: config.reliability.deadlineMs,
+            absoluteMs: config.reliability.deadlineMs,
+          },
+        );
+        request.onStage?.("RESPONSE_NORMALIZED", "ok", {
+          contentCharacters: result.content.length,
+        });
+        return result;
+      } catch (error) {
+        request.onStage?.(
+          received ? "RESPONSE_NORMALIZED" : "PROVIDER_RESPONSE_RECEIVED",
+          "error",
+          { errorCode: error?.code, httpStatus: error?.details?.status },
+        );
+        throw error;
+      }
     },
   };
 }
@@ -248,4 +369,9 @@ async function gatewayHealth(config, credentials) {
     versionVerified: false,
   };
 }
-module.exports = { createLLMClient, consumeStream, gatewayHealth };
+module.exports = {
+  createLLMClient,
+  consumeStream,
+  consumeCompletion,
+  gatewayHealth,
+};

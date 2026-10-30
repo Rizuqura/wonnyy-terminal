@@ -19,6 +19,7 @@
     "benchmarkMaxAgeDays": 30
   },
   "generation": {
+    "streaming": true,
     "maxOutputTokens": 2048,
     "contextWindow": 8192,
     "headroomFraction": 0.15,

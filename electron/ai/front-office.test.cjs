@@ -49,6 +49,29 @@ function response(overrides = {}) {
   };
 }
 
+test("request stages correlate by ID, strip sensitive metadata and preserve the first failure", () => {
+  const { observer, advance } = fixture();
+  observer.stage("REQUEST_RECEIVED", "ok", {
+    prompt: "PRIVATE_PROMPT_SENTINEL",
+    headers: { Authorization: "KEY_SENTINEL" },
+  });
+  advance(20);
+  observer.stage("MODEL_CANDIDATES_EVALUATED", "error", {
+    candidateCount: 3,
+    errorCode: "MODEL_UNAVAILABLE",
+    rawBody: "PRIVATE_RESPONSE_SENTINEL",
+  });
+  observer.stage("REQUEST_COMPLETED", "error");
+  observer.stage("PRIVATE_UNKNOWN_STAGE", "ok");
+  observer.finish("failed", { code: "MODEL_UNAVAILABLE" });
+  const trace = observer.snapshot();
+  assert.equal(trace.failedStage, "MODEL_CANDIDATES_EVALUATED");
+  assert.equal(trace.stages.length, 3);
+  assert.ok(trace.stages.every((s) => s.requestId === "request-1"));
+  assert.equal(trace.stages[1].elapsedMs, 20);
+  assert.doesNotMatch(exportTraces([trace]), /SENTINEL|Authorization|PRIVATE_/);
+});
+
 test("metrics CLI extracts only a run's metrics and refuses to overwrite exports", async (t) => {
   const directory = await fs.mkdtemp(
     path.join(os.tmpdir(), "qterminal-metrics-"),

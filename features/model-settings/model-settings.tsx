@@ -146,7 +146,10 @@ export function ModelSettings({
             Back to workspace <span aria-hidden="true">↗</span>
           </button>
         </header>
-        <FrontOfficeSettings hasVault={Boolean(vaultPath)} />
+        <FrontOfficeSettings
+          hasVault={Boolean(vaultPath)}
+          beforeOperation={chat.prepareBasicChat}
+        />
         {chat.agent?.runtimeModel.modelId && (
           <p className="ai-privacy">
             {chat.agent.displayName} uses {chat.agent.runtimeModel.providerId} /{" "}

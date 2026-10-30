@@ -47,6 +47,7 @@ function createBaselineObserver({
   const selectedProvider = safeProvider(providerId);
   /** @type {import('../../../types/front-office').BaselineTrace} */
   const trace = {
+    stages: [],
     schemaVersion: 1,
     mode,
     requestId: safeIdentity(requestId ?? runId),
@@ -91,6 +92,41 @@ function createBaselineObserver({
   };
 
   return {
+    /** Record a content-free lifecycle boundary using a strict metadata allowlist.
+     * Unknown stages/metadata are ignored, never copied into errors or exports. */
+    stage(name, status = "ok", metadata = {}) {
+      if (
+        !enabled ||
+        !contracts.stageName.safeParse(name).success ||
+        trace.stages.length >= 128
+      )
+        return;
+      const entry = {
+        requestId: trace.requestId,
+        timestamp: new Date(wallClock()).toISOString(),
+        stage: name,
+        elapsedMs: elapsed(clock, started),
+        status: ["ok", "error", "skipped", "bypassed", "buffered"].includes(
+          status,
+        )
+          ? status
+          : "error",
+      };
+      if (metadata.provider) entry.provider = safeProvider(metadata.provider);
+      if (metadata.model) entry.model = safeIdentity(metadata.model);
+      if (metadata.errorCode)
+        entry.errorCode = safeError({ code: metadata.errorCode });
+      for (const key of ["contentCharacters", "candidateCount"])
+        if (knownCount(metadata[key]) !== null) entry[key] = metadata[key];
+      if (
+        Number.isInteger(metadata.httpStatus) &&
+        metadata.httpStatus >= 100 &&
+        metadata.httpStatus <= 599
+      )
+        entry.httpStatus = metadata.httpStatus;
+      trace.stages.push(entry);
+      if (entry.status === "error") trace.failedStage ??= name;
+    },
     /**
      * Observe one adapter.complete invocation, including planner/repair attempts.
      * Does not validate/change the adapter's request, route, signal or settings.

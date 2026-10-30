@@ -23,6 +23,7 @@ const { ReliabilityController } = require("./llm-front-office/reliability.cjs");
 const {
   createLLMClient,
   consumeStream,
+  consumeCompletion,
 } = require("./llm-front-office/provider-gateway.cjs");
 const {
   processResponse,
@@ -82,6 +83,123 @@ const answer = (model = profile(), content = "Fixture answer") => ({
   content,
   finishReason: "stop",
   usage: { promptTokens: 10, completionTokens: 2, totalDurationNs: 1 },
+});
+
+test("canonical-only output-cap catalog remains eligible and is sent without dropping the cap", async () => {
+  for (const cap of ["max_completion_tokens", "max_tokens"]) {
+    const c = config();
+    delete c.generation.streaming; // Existing saved configs retain streaming.
+    const p = profile({ supportedParameters: ["temperature", cap] });
+    assert.equal(routeModels(requirements(c), [p], [], c).primary.model, p);
+    let body;
+    const client = createLLMClient({
+      model: p,
+      transport: "direct",
+      config: c,
+      registry: {
+        providerFor: () => ({
+          request: async (_, init, consume) => {
+            body = JSON.parse(init.body);
+            return consume(sse(streamEvents()), () => {});
+          },
+        }),
+      },
+    });
+    await client.complete({ messages: [{ role: "user", content: "Hello" }] });
+    assert.equal(body[cap], 128);
+    assert.equal(
+      body[cap === "max_tokens" ? "max_completion_tokens" : "max_tokens"],
+      undefined,
+    );
+    assert.equal(body.stream, true);
+  }
+  assert.throws(
+    () =>
+      routeModels(
+        requirements(),
+        [profile({ supportedParameters: ["temperature"] })],
+        [],
+        config(),
+      ),
+    { code: "MODEL_UNAVAILABLE" },
+  );
+});
+
+test("nonstreaming completion preserves visible text and usage without invented deltas or TTFT", async () => {
+  for (const content of [
+    "Hello",
+    [
+      { type: "text", text: "Hel" },
+      { type: "text", text: "lo" },
+    ],
+  ]) {
+    const stages = [];
+    const result = await consumeCompletion(
+      Response.json({
+        model: "example/model",
+        choices: [{ message: { content }, finish_reason: "stop" }],
+        usage: {
+          prompt_tokens: 12,
+          completion_tokens: 4,
+          completion_tokens_details: { reasoning_tokens: 1 },
+        },
+      }),
+      () => {},
+      {
+        onContent: () => assert.fail("No synthetic stream delta"),
+        onStage: (...args) => stages.push(args),
+      },
+      "openrouter",
+      "example/model",
+    );
+    assert.equal(result.content, "Hello");
+    assert.equal(result.usage.promptTokens, 12);
+    assert.equal(result.reasoningTokens, 1);
+    assert.equal(result.diagnostics.firstTokenMs, null);
+    assert.deepEqual(stages, [
+      ["FIRST_CONTENT_RECEIVED", "buffered", { contentCharacters: 5 }],
+    ]);
+    assert.equal(processResponse(result, config().generation).valid, true);
+  }
+  const empty = await consumeCompletion(
+    Response.json({
+      choices: [{ message: { content: null }, finish_reason: "stop" }],
+    }),
+    () => {},
+    {},
+    "openrouter",
+    "example/model",
+  );
+  assert.throws(() => processResponse(empty, config().generation), {
+    code: "MODEL_INVALID_RESPONSE",
+  });
+  const c = config();
+  c.generation.streaming = false;
+  const client = createLLMClient({
+    model: profile(),
+    transport: "direct",
+    config: c,
+    registry: {
+      providerFor: () => ({
+        request: async (_, init, consume) => {
+          assert.equal(JSON.parse(init.body).stream, false);
+          return consume(
+            Response.json({
+              choices: [
+                { message: { content: "Hello" }, finish_reason: "stop" },
+              ],
+            }),
+            () => {},
+          );
+        },
+      }),
+    },
+  });
+  assert.equal(
+    (await client.complete({ messages: [{ role: "user", content: "Hello" }] }))
+      .content,
+    "Hello",
+  );
 });
 
 async function fixture(t, behavior) {

@@ -236,9 +236,225 @@ async function main() {
       await invalidJsonAlert.innerText(),
       /PRIVATE_JSON_INPUT/,
     );
+    // Deterministic admission regression: an actual manual model check owns the
+    // normal ChatService lock while the experiment UI starts a new conversation.
+    await page.evaluate(async () => {
+      await window.wonnyyDesktop.ai.saveCredential({
+        providerId: "nvidia",
+        apiKey: "nvapi-synthetic-smoke-key",
+      });
+    });
+    await page
+      .getByRole("navigation", { name: "AI providers" })
+      .getByRole("button", { name: /NVIDIA/ })
+      .click();
+    await page
+      .getByRole("button", { name: "Refresh models", exact: true })
+      .click();
+    await page
+      .getByRole("region", { name: "NVIDIA models", exact: true })
+      .locator("article")
+      .first()
+      .waitFor();
+    await app.evaluate(() => {
+      globalThis.frontOfficeSmoke.backgroundState.checkDelayMs = 10000;
+    });
+    await page
+      .getByRole("region", { name: "NVIDIA models", exact: true })
+      .getByRole("button", { name: "Check model", exact: true })
+      .first()
+      .click();
+    await page
+      .getByRole("button", { name: "Stop checks", exact: true })
+      .waitFor();
+    await page
+      .getByRole("button", {
+        name: "New experiment / reset history",
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("button", { name: "Stop checks", exact: true })
+      .waitFor({ state: "hidden" });
+    assert.equal(
+      await page.getByRole("alert").filter({ hasText: "MODEL_BUSY" }).count(),
+      0,
+    );
+
+    const evidence = {
+      source: "synthetic Electron UI fixtures; not live provider proof",
+      admission: "PASS",
+      failures: [],
+      fallback: null,
+    };
+    // A backend finish proves dispatch, not rendering. Observe the visible
+    // alert/final assistant separately with the same request identity.
+    const frontendObservation = (event) => ({
+      timestamp: new Date().toISOString(),
+      requestId: event.requestId,
+      stage: "FRONTEND_RESPONSE_DELIVERED",
+      status: "ok",
+      elapsedMs: Date.now() - Date.parse(event.trace.startedAt),
+    });
+    const applyConfig = async (edit) => {
+      const c = await page.evaluate(
+        async () => (await window.wonnyyDesktop.ai.frontOfficeState()).config,
+      );
+      edit(c);
+      await page
+        .getByLabel("Advanced backend configuration", { exact: true })
+        .fill(JSON.stringify(c));
+      await page
+        .getByRole("button", {
+          name: "Apply advanced configuration",
+          exact: true,
+        })
+        .click();
+      await page
+        .getByText("Backend configuration saved.", { exact: true })
+        .waitFor();
+      const previous = await page
+        .getByLabel("Saved experiment", { exact: true })
+        .inputValue();
+      await page
+        .getByRole("button", {
+          name: "New experiment / reset history",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction((old) => {
+        const id = document.querySelector(
+          '[aria-label="Saved experiment"]',
+        )?.value;
+        return id && id !== old;
+      }, previous);
+    };
+    const terminal = async (text) => {
+      await page.evaluate(() => {
+        globalThis.fixtureTerminal = null;
+        globalThis.fixtureUnsubscribe?.();
+        globalThis.fixtureUnsubscribe =
+          window.wonnyyDesktop.ai.onFrontOfficeEvent((e) => {
+            if (["finish", "error", "cancelled"].includes(e.type))
+              globalThis.fixtureTerminal = e;
+          });
+      });
+      await page.getByLabel("Experiment question", { exact: true }).fill(text);
+      await page
+        .getByRole("button", { name: "Send experiment", exact: true })
+        .click();
+      await page.waitForFunction(() => globalThis.fixtureTerminal !== null);
+      return page.evaluate(() => globalThis.fixtureTerminal);
+    };
+    const base = (c) => {
+      c.gateway.enabled = false;
+      c.enabled = true;
+      c.routing.mode = "manual";
+      c.routing.selectedDeploymentId = "openrouter:vendor/alpha";
+      c.routing.allowedProviders = ["openrouter"];
+      c.routing.allowFallback = false;
+      c.generation.streaming = true;
+      c.reliability.maxAttempts = 1;
+      c.reliability.deadlineMs = 1000;
+      c.reliability.backoffMs = 0;
+      c.reliability.circuitThreshold = 10;
+    };
+    for (const [mode, code] of [
+      ["auth", "AUTH_INVALID"],
+      ["unavailable", "MODEL_UNAVAILABLE"],
+      ["rate", "RATE_LIMITED"],
+      ["network", "PROVIDER_OFFLINE"],
+      ["timeout", "MODEL_TIMEOUT"],
+    ]) {
+      await applyConfig(base);
+      await app.evaluate((_, m) => {
+        globalThis.frontOfficeSmoke.mode = m;
+      }, mode);
+      console.log(`Fixture failure: ${mode}`);
+      const event = await terminal("Synthetic failure visibility test.");
+      assert.equal(event.type, "error");
+      await page.getByRole("alert").filter({ hasText: code }).waitFor();
+      assert.doesNotMatch(
+        await page.getByRole("alert").filter({ hasText: code }).innerText(),
+        /PRIVATE_/,
+      );
+      evidence.failures.push({
+        mode,
+        code,
+        visible: true,
+        status: "PASS",
+        trace: event.trace,
+        frontendObservation: frontendObservation(event),
+      });
+    }
+    await applyConfig((c) => {
+      base(c);
+      c.routing.selectedDeploymentId = "openrouter:vendor/missing";
+    });
+    const count = await app.evaluate(
+      () => globalThis.frontOfficeSmoke.requests.length,
+    );
+    const ineligibleEvent = await terminal(
+      "Synthetic no eligible deployment test.",
+    );
+    await page
+      .getByRole("alert")
+      .filter({ hasText: "MODEL_UNAVAILABLE" })
+      .waitFor();
+    assert.equal(
+      await app.evaluate(() => globalThis.frontOfficeSmoke.requests.length),
+      count,
+    );
+    evidence.failures.push({
+      mode: "no-eligible",
+      code: "MODEL_UNAVAILABLE",
+      visible: true,
+      providerCalls: 0,
+      status: "PASS",
+      trace: ineligibleEvent.trace,
+      frontendObservation: frontendObservation(ineligibleEvent),
+    });
+    await applyConfig((c) => {
+      base(c);
+      c.routing.mode = "auto";
+      c.routing.priority = "quality";
+      c.routing.allowFallback = true;
+      c.routing.allowModelSwitch = true;
+      c.reliability.maxAttempts = 2;
+      c.reliability.deadlineMs = 5000;
+    });
+    await app.evaluate(() => {
+      globalThis.frontOfficeSmoke.mode = "primary-failure";
+    });
+    const fallbackEvent = await terminal("Synthetic controlled fallback test.");
+    assert.equal(fallbackEvent.type, "finish");
+    const assistant = page
+      .getByLabel("Experiment messages")
+      .locator("article")
+      .filter({
+        has: page.locator("strong").filter({ hasText: /^assistant$/ }),
+      });
+    await assistant.getByText("FRONT OFFICE OK", { exact: true }).waitFor();
+    const trace = fallbackEvent.trace;
+    assert.equal(trace.providerCallCount, 2);
+    assert.equal(trace.routing.fallbackUsed, true);
+    assert.equal(trace.usageCoverage, "partial");
+    assert.equal(trace.estimatedCostUsd, null);
+    evidence.fallback = {
+      status: "PASS",
+      trace,
+      frontendObservation: frontendObservation(fallbackEvent),
+    };
+    await fs.writeFile(
+      path.join(artifacts, "failure-fallback-admission.json"),
+      JSON.stringify(evidence, null, 2),
+    );
+    await page.screenshot({
+      path: path.join(artifacts, "controlled-fallback.png"),
+    });
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: isolated Electron experiment UI, no context/persona prompt, complete history, capability filters/sorts/budget, overrides, partial-stream retry, encrypted gateway key, mocked gateway adapter and privacy-safe metrics. No live inference or real LiteLLM measurement.",
+      "PASS: isolated Electron experiment UI, complete history, capability filters, partial-stream retry, model-check admission, six visible safe failures, two-attempt controlled fallback, mocked gateway and privacy-safe metrics. No live inference or real LiteLLM measurement.",
     );
   } finally {
     if (app) await app.close();

@@ -28,6 +28,8 @@ export type BaselineCall = {
 };
 
 export type BaselineTrace = {
+  stages?: RequestStage[];
+  failedStage?: RequestStageName;
   schemaVersion: 1;
   mode: "existing-agent-baseline" | "experiment";
   requestId: string;
@@ -95,6 +97,7 @@ export type ExperimentConfig = {
     benchmarkMaxAgeDays: number;
   };
   generation: {
+    streaming: boolean;
     maxOutputTokens: number;
     contextWindow: number;
     headroomFraction: number;
@@ -287,6 +290,16 @@ export type LLMResponse = {
   diagnostics?: { firstTokenMs: number | null };
 };
 export type LLMRequest = {
+  id?: string;
+  onStage?: (
+    stage: RequestStageName,
+    status: "ok" | "error" | "buffered",
+    metadata?: {
+      httpStatus?: number;
+      contentCharacters?: number;
+      errorCode?: string;
+    },
+  ) => void;
   model?: string;
   messages: { role: "user" | "assistant"; content: string }[];
   signal?: AbortSignal;
@@ -296,3 +309,29 @@ export type LLMRequest = {
 export interface LLMClient {
   complete(request: LLMRequest): Promise<LLMResponse>;
 }
+export type RequestStageName =
+  | "REQUEST_RECEIVED"
+  | "REQUEST_VALIDATED"
+  | "MODEL_CANDIDATES_EVALUATED"
+  | "MODEL_SELECTED"
+  | "GATEWAY_REQUEST_STARTED"
+  | "PROVIDER_RESPONSE_RECEIVED"
+  | "STREAM_STARTED"
+  | "FIRST_CONTENT_RECEIVED"
+  | "RESPONSE_NORMALIZED"
+  | "OUTPUT_VALIDATED"
+  | "FRONTEND_RESPONSE_DELIVERED"
+  | "REQUEST_COMPLETED";
+export type RequestStage = {
+  requestId: string;
+  timestamp: string;
+  stage: RequestStageName;
+  elapsedMs: number;
+  status: "ok" | "error" | "skipped" | "bypassed" | "buffered";
+  provider?: string;
+  model?: string;
+  errorCode?: string;
+  httpStatus?: number;
+  contentCharacters?: number;
+  candidateCount?: number;
+};

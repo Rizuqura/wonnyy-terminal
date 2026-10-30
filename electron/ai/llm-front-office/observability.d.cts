@@ -2,6 +2,7 @@ import type { ModelMessage } from "../../../types/ai";
 import type {
   BaselineCallPhase,
   BaselineTrace,
+  RequestStageName,
 } from "../../../types/front-office";
 
 export type ObservedRequest = {
@@ -25,6 +26,18 @@ export function createBaselineObserver(options: {
   wallClock?: () => number;
   clock?: () => number;
 }): {
+  stage(
+    name: RequestStageName,
+    status?: "ok" | "error" | "skipped" | "bypassed" | "buffered",
+    metadata?: {
+      provider?: string;
+      model?: string;
+      errorCode?: string;
+      httpStatus?: number;
+      contentCharacters?: number;
+      candidateCount?: number;
+    },
+  ): void;
   complete<Request extends ObservedRequest, Response>(
     provider: { complete(request: Request): Promise<Response> },
     request: Request,

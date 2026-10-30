@@ -26,6 +26,20 @@ const routingId = z
   .max(240)
   .regex(/^(openrouter|nvidia):[~A-Za-z0-9][A-Za-z0-9._:/-]*$/);
 const duration = z.number().finite().nonnegative();
+const stageName = z.enum([
+  "REQUEST_RECEIVED",
+  "REQUEST_VALIDATED",
+  "MODEL_CANDIDATES_EVALUATED",
+  "MODEL_SELECTED",
+  "GATEWAY_REQUEST_STARTED",
+  "PROVIDER_RESPONSE_RECEIVED",
+  "STREAM_STARTED",
+  "FIRST_CONTENT_RECEIVED",
+  "RESPONSE_NORMALIZED",
+  "OUTPUT_VALIDATED",
+  "FRONTEND_RESPONSE_DELIVERED",
+  "REQUEST_COMPLETED",
+]);
 const status = z.enum(["running", "succeeded", "failed", "cancelled"]);
 const errorCode = z.enum([
   ...new Set(Object.values(MODEL_ERROR_CODES)),
@@ -90,6 +104,25 @@ const callSchema = z.object({
 });
 
 const traceSchema = z.object({
+  stages: z
+    .array(
+      z.object({
+        requestId: identity,
+        timestamp: z.iso.datetime(),
+        stage: stageName,
+        elapsedMs: duration,
+        status: z.enum(["ok", "error", "skipped", "bypassed", "buffered"]),
+        provider: providerId.optional(),
+        model: identity.optional(),
+        errorCode: errorCode.optional(),
+        httpStatus: z.number().int().min(100).max(599).optional(),
+        contentCharacters: count.optional(),
+        candidateCount: count.optional(),
+      }),
+    )
+    .max(128)
+    .optional(),
+  failedStage: stageName.optional(),
   schemaVersion: z.literal(1),
   mode: z.enum(["existing-agent-baseline", "experiment"]),
   requestId: identity,
@@ -179,4 +212,5 @@ module.exports = {
   identity,
   errorCode,
   finishReason,
+  stageName,
 };

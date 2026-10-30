@@ -8,7 +8,12 @@ app.setPath("userData", process.env.WONNYY_SMOKE_DATA);
 fs.mkdirSync(process.env.WONNYY_SMOKE_DATA, { recursive: true });
 const { createOnlineSmokeFetch } = require("./fixtures/online-smoke-fetch.cjs");
 const fallback = createOnlineSmokeFetch();
-const state = { requests: [], mode: "success", delayMs: 80 };
+const state = {
+  requests: [],
+  mode: "success",
+  delayMs: 80,
+  backgroundState: fallback.state,
+};
 globalThis.frontOfficeSmoke = state;
 globalThis.fetch = async (url, init = {}) => {
   const endpoint = new URL(url);
@@ -68,6 +73,31 @@ globalThis.fetch = async (url, init = {}) => {
       });
       if (state.mode === "auth")
         return new Response("PRIVATE_ERROR_BODY", { status: 401 });
+      if (state.mode === "unavailable")
+        return new Response("PRIVATE_ERROR_BODY", { status: 404 });
+      if (state.mode === "rate")
+        return new Response("PRIVATE_ERROR_BODY", { status: 429 });
+      if (state.mode === "network") throw new TypeError("PRIVATE_NETWORK_BODY");
+      if (state.mode === "timeout")
+        return new Promise((_, reject) => {
+          if (init.signal.aborted) reject(init.signal.reason);
+          else
+            init.signal.addEventListener(
+              "abort",
+              () => reject(init.signal.reason),
+              { once: true },
+            );
+        });
+      if (state.mode === "primary-failure" && body.model === "vendor/alpha")
+        return new Response("PRIVATE_ERROR_BODY", { status: 503 });
+      if (!body.stream)
+        return Response.json({
+          model: body.model,
+          choices: [
+            { message: { content: "FRONT OFFICE OK" }, finish_reason: "stop" },
+          ],
+          usage: { prompt_tokens: 15, completion_tokens: 4 },
+        });
       let timer;
       const encoder = new TextEncoder();
       const event = (value) =>

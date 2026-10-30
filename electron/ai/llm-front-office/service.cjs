@@ -185,6 +185,8 @@ class FrontOfficeService {
       providerId: "unknown",
       modelId: "unknown",
     });
+    observer.stage("REQUEST_RECEIVED");
+    observer.stage("REQUEST_VALIDATED");
     const startedAt = new Date().toISOString();
     const started = performance.now();
     const event = (data) =>
@@ -419,6 +421,9 @@ class FrontOfficeService {
       pending = true;
       event({ type: "start" });
       const catalog = await this.catalog.state();
+      observer.stage("MODEL_CANDIDATES_EVALUATED", "ok", {
+        candidateCount: catalog.profiles.length,
+      });
       controller.signal.throwIfAborted();
       plan = routeModels(
         requirements,
@@ -427,6 +432,10 @@ class FrontOfficeService {
         config,
         (id) => this.reliability.healthy(id),
       );
+      observer.stage("MODEL_SELECTED", "ok", {
+        provider: plan.primary.model.providerId,
+        model: plan.primary.model.modelId,
+      });
       event({
         type: "routing",
         routing: {
@@ -451,11 +460,18 @@ class FrontOfficeService {
           });
           let length = 0;
           return observer.complete(client, {
+            id: request.requestId,
             model: candidate.model.modelId,
+            onStage: (name, status, metadata) =>
+              observer.stage(name, status, {
+                ...metadata,
+                provider: candidate.model.providerId,
+                model: candidate.model.modelId,
+              }),
             messages,
             signal,
             settings: {
-              streaming: true,
+              streaming: config.generation.streaming,
               outputLimit: config.generation.maxOutputTokens,
             },
             onContent: (content) => {
@@ -484,7 +500,16 @@ class FrontOfficeService {
           "MODEL_INVALID_RESPONSE",
           "Provider-reported output exceeded the requested cap.",
         );
-      validation = processResponse(response, config.generation);
+      try {
+        validation = processResponse(response, config.generation);
+      } catch (error) {
+        observer.stage("OUTPUT_VALIDATED", "error", { errorCode: error?.code });
+        throw error;
+      }
+      observer.stage("OUTPUT_VALIDATED", validation.valid ? "ok" : "error");
+      // This durable metric ends before persistence/rendering (see timingBoundary).
+      // Only the external DOM diagnostic can attest FRONTEND_RESPONSE_DELIVERED.
+      observer.stage("REQUEST_COMPLETED");
       observer.finish("succeeded");
       const run = record("succeeded");
       await createModelRun(root, run);
@@ -547,6 +572,16 @@ class FrontOfficeService {
       }
       attempts = original?.frontOfficeAttempts ?? attempts;
       const failure = publicError(original);
+      observer.stage(
+        observer.snapshot().stages.at(-1)?.stage ?? "REQUEST_RECEIVED",
+        "error",
+        { errorCode: failure.code },
+      );
+      observer.stage(
+        "REQUEST_COMPLETED",
+        failure.code === "MODEL_CANCELLED" ? "skipped" : "error",
+        { errorCode: failure.code },
+      );
       const status =
         failure.code === "MODEL_CANCELLED" ? "cancelled" : "failed";
       observer.finish(status, { code: failure.code });

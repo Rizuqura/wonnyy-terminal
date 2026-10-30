@@ -2,6 +2,14 @@
 
 Date: 2026-10-30 (Asia/Jakarta). Governing task: [Pre-LLM implementation brief](QTerminal_PreLLM_Backend_Codex_Implementation_Brief.md). The user requested implementation/execution of all backend-feature work after the initial audit/instrumentation checkpoint.
 
+## QT-RCA-001 audit update
+
+The record below describes the earlier implementation checkpoint. The subsequent strict provider audit supersedes its live-access limitations for OpenRouter: real authenticated text now passes the context-free backend, streaming and non-streaming final assistant UI, and ORBITAL two-turn continuity. NVIDIA's saved model still times out in a bounded direct test; a listed alternate returns 404. Actual LiteLLM remains disabled/unconfigured and unverified. Operational verdict: **PARTIALLY OPERATIONAL**.
+
+The audit is isolated in `tmp/qt-rca-001` on `audit/qt-rca-001`, compared against supplied-source snapshot `829d704`. Original main and all 342 source hashes are preserved. Minimal repairs coordinate experiment actions with active model checks, accept the advertised output-cap parameter alias, retain safe UI error codes, add a true non-streaming diagnostic option and content-free stage tracing. No new backend package or dependency upgrade was added. Full Node verification: 346 tests, 344 passed, two environment-only live tests explicitly skipped, zero failed; separate actual provider/UI proof is recorded. Synthetic UI failures/fallback and the normal agent/context Electron regression pass.
+
+Read [provider RCA](../../docs/backend/PROVIDER_RCA.md), [request flow](../../docs/backend/PROVIDER_REQUEST_FLOW.md), [reproduction](../../docs/backend/PROVIDER_DIAGNOSTICS.md) and [captured evidence](../../docs/backend/evidence/README.md). The audit adds local commits only on its separate branch; the earlier "no commits" statement below applies to the earlier checkpoint.
+
 ## Delivered application code
 
 | Milestone | Implementation status | Evidence / scope |

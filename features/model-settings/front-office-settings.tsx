@@ -28,6 +28,18 @@ function parseJson(text: string): unknown {
     );
   }
 }
+/** Only fixed backend error codes accompany public messages; never echo raw provider bodies. */
+function diagnosticError(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message : "The experiment failed.";
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" &&
+    /^(MODEL_|AUTH_|REMOTE_|PROVIDER_|RATE_LIMITED$|PAYMENT_REQUIRED$)[A-Z_]*$/.test(
+      code,
+    )
+    ? `${message} (${code})`
+    : message;
+}
 function download(text: string, name: string, type: string) {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const link = document.createElement("a");
@@ -37,11 +49,20 @@ function download(text: string, name: string, type: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function FrontOfficeSettings({ hasVault }: { hasVault: boolean }) {
+export function FrontOfficeSettings({
+  hasVault,
+  beforeOperation,
+}: {
+  hasVault: boolean;
+  beforeOperation?: () => Promise<void>;
+}) {
   const [state, setState] = useState<FrontOfficeState | null>(null);
   const [draft, setDraft] = useState<ExperimentConfig | null>(null);
   const [advanced, setAdvanced] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Electron can strip custom Error properties across contextBridge. Retain the
+  // structured public event failure so the rejected IPC promise cannot erase its code.
+  const requestFailure = useRef<string | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
@@ -118,7 +139,14 @@ export function FrontOfficeSettings({ hasVault }: { hasVault: boolean }) {
       if (event.type === "attempt")
         setAttempts((values) => [...values, event.attempt]);
       if (event.trace) setTrace(event.trace);
-      if (event.error) setError(event.error.message);
+      if (event.error) {
+        requestFailure.current = diagnosticError(
+          Object.assign(new Error(event.error.message), {
+            code: event.error.code,
+          }),
+        );
+        setError(requestFailure.current);
+      }
       if (event.message) setNotice(event.message);
       if (event.validation && !event.validation.valid)
         setNotice(
@@ -138,9 +166,10 @@ export function FrontOfficeSettings({ hasVault }: { hasVault: boolean }) {
     setError(null);
     setNotice("");
     try {
+      await beforeOperation?.();
       await operation();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Backend operation failed.");
+      setError(diagnosticError(e));
     } finally {
       setBusy(false);
     }
@@ -190,6 +219,7 @@ export function FrontOfficeSettings({ hasVault }: { hasVault: boolean }) {
   const run = async (retry = false) => {
     if (locked || !conversation || !question.trim()) return;
     const id = crypto.randomUUID();
+    requestFailure.current = null;
     request.current = id;
     setRunning(true);
     setError(null);
@@ -199,6 +229,7 @@ export function FrontOfficeSettings({ hasVault }: { hasVault: boolean }) {
     setRoute(null);
     setAttempts([]);
     try {
+      await beforeOperation?.();
       const result = await bridge().frontOfficeChat({
         conversationId: conversation.id,
         requestId: id,
@@ -212,7 +243,7 @@ export function FrontOfficeSettings({ hasVault }: { hasVault: boolean }) {
       setQuestion("");
       setTrace(result.run?.diagnostics.frontOffice ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The experiment failed.");
+      setError(requestFailure.current ?? diagnosticError(e));
       try {
         setConversation(await bridge().frontOfficeRead(conversation.id));
       } catch {
@@ -251,6 +282,23 @@ export function FrontOfficeSettings({ hasVault }: { hasVault: boolean }) {
         <>
           <fieldset disabled={locked}>
             <legend>Basic experiment settings</legend>
+            <label>
+              <input
+                type="checkbox"
+                checked={draft.generation.streaming}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    generation: {
+                      ...draft.generation,
+                      streaming: e.target.checked,
+                    },
+                  })
+                }
+              />{" "}
+              Stream generated text (disable for basic non-streaming
+              diagnostics)
+            </label>
             <label>
               <input
                 type="checkbox"
