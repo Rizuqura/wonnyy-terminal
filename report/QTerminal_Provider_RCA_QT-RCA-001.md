@@ -1,5 +1,7 @@
 # Laporan Audit Provider dan Pipeline LLM QTerminal
 
+**Pembaruan NVIDIA:** [QT-RCA-002](QTerminal_NVIDIA_Thinking_Fix_QT-RCA-002.md) mereproduksi respons kosong akibat thinking, memperbaiki deployment Lightning yang dipakai pengguna, memverifikasi Agent Chat nyata, dan menerapkan perbaikan tersebut ke checkout utama. Hasil di bawah adalah catatan audit pertama.
+
 **Audit:** QT-RCA-001
 
 **Tanggal:** 30 Oktober 2026, Asia/Jakarta

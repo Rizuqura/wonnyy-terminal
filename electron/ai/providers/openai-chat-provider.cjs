@@ -101,6 +101,11 @@ function remoteError(status, retryAfter, label = "NVIDIA") {
   });
 }
 class OpenAIChatProvider {
+  // Provider subclasses opt in only to documented model-specific wire options.
+  // Unknown deployments and OpenRouter retain their existing request body.
+  generationParameters(_model) {
+    return {};
+  }
   constructor({ credentials, fetchImpl = fetch }, configuration = {}) {
     this.providerId = configuration.providerId ?? "nvidia";
     this.label = configuration.label ?? "NVIDIA";
@@ -349,6 +354,7 @@ class OpenAIChatProvider {
           temperature: settings.temperature,
           max_tokens: settings.outputLimit,
           stream: true,
+          ...this.generationParameters(model),
         }),
       },
       async (response, touch) => {
@@ -365,6 +371,7 @@ class OpenAIChatProvider {
           firstTokenMs = null,
           bytes = 0,
           streamDone = false;
+        let reasoningCharacters = 0;
         const decoder = new TextDecoder("utf-8", { fatal: true });
         const event = () => {
           if (!data.length) return;
@@ -395,6 +402,12 @@ class OpenAIChatProvider {
           }
           const choice = value.choices[0];
           if (choice?.index && choice.index !== 0) throw invalid(this.label);
+          // Count activity, never retain or forward hidden reasoning to the UI.
+          reasoningCharacters += (
+            choice?.delta.reasoning_content ??
+            choice?.delta.reasoning ??
+            ""
+          ).length;
           if (choice?.delta.content) {
             if (finish) throw invalid(this.label);
             request.onGenerationStarted?.();
@@ -426,6 +439,9 @@ class OpenAIChatProvider {
             }
             bytes += value.byteLength;
             if (bytes > LIMIT) throw invalid(this.label);
+            // Reasoning/heartbeat bytes are network activity too. The absolute
+            // request deadline remains unchanged even while the idle timer resets.
+            touch();
             try {
               buffer += decoder.decode(value, { stream: true });
             } catch {
@@ -444,8 +460,14 @@ class OpenAIChatProvider {
           if (finish === "length")
             throw new ModelRuntimeError(
               "MODEL_INVALID_RESPONSE",
-              `${this.label} reached the output limit before finishing. Increase the output limit or ask for a shorter answer.`,
-              { reason: "truncated" },
+              !content.trim() && reasoningCharacters
+                ? `${this.label} used the output allowance for internal reasoning before producing an answer. This does not establish an input-context overflow. Check this model's thinking configuration.`
+                : `${this.label} reached the output limit before finishing. Increase the output limit or ask for a shorter answer.`,
+              {
+                reason: "truncated",
+                visibleCharacters: content.length,
+                reasoningCharacters,
+              },
             );
           if (finish !== "stop" || !content.trim()) throw invalid(this.label);
           const normalized = datasetPlan
@@ -470,6 +492,7 @@ class OpenAIChatProvider {
               executionLocation: "remote",
               requestedModel: model,
               firstTokenMs,
+              reasoningCharacters,
             },
           };
         } finally {

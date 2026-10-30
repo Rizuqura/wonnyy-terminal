@@ -288,6 +288,9 @@ function createLLMClient({ model, transport, config, registry, credentials }) {
         temperature: g.temperature,
         [outputParameter]: g.maxOutputTokens,
         stream: g.streaming,
+        ...(transport === "direct"
+          ? adapter.generationParameters?.(model.modelId)
+          : {}),
         ...(g.format === "json"
           ? {
               response_format: g.jsonSchema

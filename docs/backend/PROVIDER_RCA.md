@@ -1,5 +1,7 @@
 # QT-RCA-001 — Provider and inference pipeline audit
 
+Follow-up: [QT-RCA-002](../../report/QTerminal_NVIDIA_Thinking_Fix_QT-RCA-002.md) verifies the user's subsequently selected NVIDIA Lightning deployment after an explicit thinking-mode repair, including normal Agent Chat and application to the active checkout. The original DeepSeek failure below remains a separate historical capture.
+
 Date: 2026-10-30, Asia/Jakarta. Verdict: **PARTIALLY OPERATIONAL**.
 
 Real OpenRouter generation, the context-free QTerminal backend, streaming/non-streaming assistant rendering and ordinary two-turn history are verified. NVIDIA generation failed independently of the advanced pipeline. Actual LiteLLM is disabled/unconfigured and is **NOT VERIFIED**. No broad provider reliability, large-context capability or benchmark improvement is claimed.
