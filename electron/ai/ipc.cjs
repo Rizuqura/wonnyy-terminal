@@ -26,6 +26,15 @@ function registerAiIpc({
   researchKnowledge,
 }) {
   const compatible = new Set();
+  const frontOffice =
+    registry?.file && credentials
+      ? new (require("./llm-front-office/service.cjs").FrontOfficeService)({
+          directory: require("node:path").dirname(registry.file),
+          service,
+          registry,
+          credentials,
+        })
+      : null;
   const checks = new Map();
   const clients = new Map();
   const usage = new OpenRouterUsageService({ credentials, registry });
@@ -52,6 +61,7 @@ function registerAiIpc({
           clients.delete(event.sender.id);
           compatible.delete(event.sender.id);
           pulls.cancelOwner(event.sender.id);
+          void service.cancel?.(event.sender.id);
         });
       }
     } else {
@@ -82,6 +92,40 @@ function registerAiIpc({
       }
     });
   handle("pullStatus", () => pulls.list());
+  const front = () => {
+    if (!frontOffice)
+      throw new ModelRuntimeError(
+        "MODEL_RESTART_REQUIRED",
+        "Restart QTerminal to load the experimental backend.",
+      );
+    return frontOffice;
+  };
+  handle("frontOfficeState", (_, task) => front().state(task ?? "general"));
+  handle("frontOfficeConfig", (_, input) => front().saveConfig(input));
+  handle("frontOfficeRefresh", (_, input) => front().refresh(input));
+  handle("frontOfficeOverride", (_, input) =>
+    service.exclusive(() => front().catalog.override(input)),
+  );
+  handle("frontOfficeEvidence", (_, input) =>
+    service.exclusive(() => front().catalog.addEvidence(input)),
+  );
+  handle("frontOfficeFavorite", (_, input) =>
+    service.exclusive(() => front().catalog.favorite(input)),
+  );
+  handle("frontOfficeHealth", () => front().health());
+  handle("frontOfficeList", () => front().list(getVault()));
+  handle("frontOfficeRead", (_, id) => front().read(getVault(), id));
+  handle("frontOfficeCreate", () => front().create(getVault()));
+  handle("frontOfficeDelete", (_, id) => front().remove(getVault(), id));
+  handle("frontOfficeExport", (_, format) =>
+    front().export(getVault(), parse(z.enum(["json", "csv"]), format)),
+  );
+  handle("frontOfficeChat", (event, input) =>
+    front().run(getVault(), event.sender.id, input, (value) => {
+      if (!event.sender.isDestroyed())
+        event.sender.send("ai:frontOfficeEvent", value);
+    }),
+  );
   handle("pullModel", (event, model) => {
     service.assertIdle();
     return pulls.start(model, event.sender.id);

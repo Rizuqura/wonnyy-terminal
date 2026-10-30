@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "routing": {
+    "mode": "manual",
+    "priority": "balanced",
+    "selectedDeploymentId": null,
+    "allowedProviders": ["openrouter", "nvidia"],
+    "unverifiedContext": "warn",
+    "allowFallback": false,
+    "allowCrossProviderFallback": false,
+    "allowModelSwitch": false,
+    "weights": {
+      "quality": 0.4,
+      "cost": 0.2,
+      "latency": 0.2,
+      "reliability": 0.2
+    },
+    "benchmarkMaxAgeDays": 30
+  },
+  "generation": {
+    "streaming": true,
+    "maxOutputTokens": 2048,
+    "contextWindow": 8192,
+    "headroomFraction": 0.15,
+    "temperature": 0.2,
+    "format": "text",
+    "jsonSchema": null
+  },
+  "budget": { "maxEstimatedUsd": null, "maxTotalTokens": null },
+  "reliability": {
+    "maxAttempts": 2,
+    "deadlineMs": 60000,
+    "backoffMs": 500,
+    "cooldownMs": 30000,
+    "circuitThreshold": 3
+  },
+  "gateway": {
+    "enabled": false,
+    "baseUrl": "http://127.0.0.1:4000/v1",
+    "version": "1.106.6"
+  },
+  "telemetry": {
+    "retentionDays": 14,
+    "rawPromptLogging": false,
+    "rawResponseLogging": false
+  }
+}

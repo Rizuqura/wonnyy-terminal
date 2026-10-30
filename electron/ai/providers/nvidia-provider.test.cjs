@@ -75,6 +75,131 @@ const credentials = {
   },
   status: async () => ({ configured: true, secureStorageAvailable: true }),
 };
+
+test("verified NVIDIA instruct modes disable thinking without changing output caps or guessing other deployments", async () => {
+  const supported = [
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  ];
+  for (const model of [
+    ...supported,
+    "nvidia/unverified-nemotron-reasoning",
+    "deepseek-ai/deepseek-r1",
+    "nvidia/test",
+  ]) {
+    const provider = new NvidiaProvider({
+      credentials,
+      fetchImpl: async (_, init) => {
+        const body = JSON.parse(init.body);
+        assert.equal(body.max_tokens, 6000);
+        assert.deepEqual(
+          body.chat_template_kwargs,
+          supported.includes(model) ? { enable_thinking: false } : undefined,
+        );
+        return stream([part("QTERMINAL_OK", "stop")]);
+      },
+    });
+    assert.equal(
+      validateAnswer(
+        await provider.complete({
+          ...request(),
+          model,
+          settings: { ...request().settings, outputLimit: 6000 },
+        }),
+      ),
+      "QTERMINAL_OK",
+    );
+  }
+});
+
+test("reasoning-only truncation reports counts without leaking hidden text or claiming context overflow", async () => {
+  const provider = new NvidiaProvider({
+    credentials,
+    fetchImpl: async () =>
+      stream([
+        {
+          choices: [
+            {
+              delta: { reasoning_content: "PRIVATE_REASONING_SENTINEL" },
+              finish_reason: "length",
+            },
+          ],
+        },
+      ]),
+  });
+  await assert.rejects(provider.complete(request()), (error) => {
+    assert.equal(error.code, "MODEL_INVALID_RESPONSE");
+    assert.equal(error.details.visibleCharacters, 0);
+    assert.equal(error.details.reasoningCharacters, 26);
+    assert.match(error.message, /internal reasoning/);
+    assert.doesNotMatch(
+      JSON.stringify({ message: error.message, details: error.details }),
+      /PRIVATE_REASONING_SENTINEL/,
+    );
+    return true;
+  });
+});
+
+test("active reasoning resets inactivity timeout while the total deadline stays bounded", async () => {
+  const provider = new NvidiaProvider({
+    credentials,
+    fetchImpl: async (_, init) => {
+      let timer,
+        abort,
+        count = 0;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            abort = () => {
+              clearInterval(timer);
+              controller.error(init.signal.reason);
+            };
+            init.signal.addEventListener("abort", abort, { once: true });
+            timer = setInterval(() => {
+              const value =
+                count++ < 5
+                  ? { choices: [{ delta: { reasoning_content: "hidden" } }] }
+                  : part("QTERMINAL_OK", "stop");
+              controller.enqueue(
+                new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`),
+              );
+              if (count === 6) {
+                clearInterval(timer);
+                init.signal.removeEventListener("abort", abort);
+                controller.close();
+              }
+            }, 250);
+          },
+          cancel() {
+            clearInterval(timer);
+            init.signal.removeEventListener("abort", abort);
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const value = await provider.complete({
+    ...request(),
+    settings: {
+      ...request().settings,
+      inactivityTimeoutMs: 1000,
+      absoluteTimeoutMs: 5000,
+    },
+  });
+  assert.equal(validateAnswer(value), "QTERMINAL_OK");
+  await assert.rejects(
+    provider.complete({
+      ...request(),
+      settings: {
+        ...request().settings,
+        inactivityTimeoutMs: 1000,
+        absoluteTimeoutMs: 1000,
+      },
+    }),
+    { code: "REMOTE_TIMEOUT" },
+  );
+});
 const request = () => ({
   model: "nvidia/test",
   settings: { ...DEFAULTS, providerId: "nvidia", modelId: "nvidia/test" },

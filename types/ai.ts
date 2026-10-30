@@ -1,4 +1,12 @@
 import type { BrainScope, BrainScopeMode, BrainErrorCode } from "./electron";
+import type { BaselineTrace } from "./front-office";
+import type {
+  ExperimentConfig,
+  ExperimentConversation,
+  ExperimentEvent,
+  ExperimentResult,
+  FrontOfficeState,
+} from "./front-office";
 
 export type ModelMessage = {
   role: "system" | "user" | "assistant";
@@ -421,7 +429,7 @@ export type ChatRun = Omit<ModelRunRecord, "schemaVersion" | "status"> & {
   requestId: string;
   contextIdentity: ContextIdentity;
   settings: ModelSettings;
-  diagnostics: Record<string, unknown>;
+  diagnostics: Record<string, unknown> & { frontOffice?: BaselineTrace };
 };
 export type ChatResult = { conversation: Conversation; run: ChatRun | null };
 export type ChatEvent = {
@@ -433,7 +441,7 @@ export type ChatEvent = {
   content?: string;
   conversation?: Conversation;
   error?: ModelRuntimeErrorValue;
-  diagnostics?: Record<string, unknown>;
+  diagnostics?: Record<string, unknown> & { frontOffice?: BaselineTrace };
 };
 export interface OpenRouterUsageSnapshot {
   status:
@@ -462,6 +470,39 @@ export interface OpenRouterUsageSnapshot {
   errorMessage?: string;
 }
 export interface AiBridge {
+  frontOfficeState(
+    task?: "general" | "finance" | "format" | "retrieval" | "conversation",
+  ): Promise<FrontOfficeState>;
+  frontOfficeConfig(config: ExperimentConfig): Promise<ExperimentConfig>;
+  frontOfficeRefresh(provider: "openrouter" | "nvidia"): Promise<number>;
+  frontOfficeOverride(input: {
+    deploymentId: string;
+    patch: Record<string, unknown> | null;
+  }): Promise<void>;
+  frontOfficeEvidence(input: unknown): Promise<void>;
+  frontOfficeFavorite(input: {
+    deploymentId: string;
+    favorite: boolean;
+  }): Promise<void>;
+  frontOfficeHealth(): Promise<{
+    status: string;
+    pinnedVersion: string;
+    versionVerified: boolean;
+  }>;
+  frontOfficeList(): Promise<ExperimentConversation[]>;
+  frontOfficeRead(id: string): Promise<ExperimentConversation>;
+  frontOfficeCreate(): Promise<ExperimentConversation>;
+  frontOfficeDelete(id: string): Promise<void>;
+  frontOfficeExport(format: "json" | "csv"): Promise<string>;
+  frontOfficeChat(input: {
+    conversationId: string;
+    requestId: string;
+    userMessage: string;
+    transport?: "direct" | "litellm";
+    task?: "general" | "finance" | "format" | "retrieval" | "conversation";
+    retryOf?: string;
+  }): Promise<ExperimentResult>;
+  onFrontOfficeEvent(callback: (event: ExperimentEvent) => void): () => void;
   listConstructionFiles?(): Promise<string[]>;
   previewConstructionFile?(input: {
     relativePath: string;
@@ -533,11 +574,11 @@ export interface AiBridge {
   models(): Promise<RegistryState>;
   settings(input: Partial<ModelSettings>): Promise<ModelSettings>;
   saveCredential(input: {
-    providerId: "gemini" | "nvidia" | "openrouter";
+    providerId: "gemini" | "nvidia" | "openrouter" | "litellm";
     apiKey: string;
   }): Promise<{ configured: boolean; secureStorageAvailable: boolean }>;
   removeCredential(input: {
-    providerId: "gemini" | "nvidia" | "openrouter";
+    providerId: "gemini" | "nvidia" | "openrouter" | "litellm";
   }): Promise<{ configured: boolean; secureStorageAvailable: boolean }>;
   context(input: ScopeSelection): Promise<ContextIdentity>;
   listConversations(): Promise<Conversation[]>;

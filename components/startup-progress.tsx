@@ -22,7 +22,7 @@ export function StartupProgress({
           height={128}
         />
         <h1>QTerminal</h1>
-        <p className="startup-version">v1.0.0 Victoria Beta</p>
+        <p className="startup-version">v1.0.1 Victoria Beta</p>
         <p className="startup-stage" role="status" aria-live="polite">
           {label}
         </p>

@@ -36,7 +36,12 @@ assert.ok(
 );
 const html = asar.extractFile(archive, "out/index.html").toString();
 assert.match(html, /Content-Security-Policy/);
-assert.match(html, /v1\.0\.0 Victoria Beta/);
+const releaseVersion = require("../package.json").version;
+assert.ok(html.includes(`v${releaseVersion} Victoria Beta`));
+assert.equal(
+  JSON.parse(asar.extractFile(archive, "package.json").toString()).version,
+  releaseVersion,
+);
 function size(target) {
   return fs
     .readdirSync(target, { withFileTypes: true })

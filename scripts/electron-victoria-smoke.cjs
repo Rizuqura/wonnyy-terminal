@@ -47,15 +47,18 @@ async function main() {
     page.on("pageerror", (error) => errors.push(error.message));
     await page.waitForFunction(() => window.wonnyyDesktop?.apiVersion === 18);
     await page.getByRole("button", { name: "WORKSPACE", exact: true }).click();
-    assert.equal(await page.title(), "QTerminal 1.0.0 Victoria");
+    assert.equal(await page.title(), "QTerminal");
     assert.deepEqual(
       await app.evaluate(({ app, BrowserWindow }) => ({
         name: app.getName(),
         title: BrowserWindow.getAllWindows()[0].getTitle(),
       })),
-      { name: "QTerminal 1.0.0 Victoria", title: "QTerminal 1.0.0 Victoria" },
+      { name: "QTerminal", title: "QTerminal" },
     );
-    await page.getByText("1.0.0 Victoria", { exact: true }).waitFor();
+    assert.equal(
+      await page.locator(".version").innerText(),
+      `v${require("../package.json").version} Victoria Beta`,
+    );
     await page
       .getByRole("button", { name: "Minimize knowledge vault", exact: true })
       .click();

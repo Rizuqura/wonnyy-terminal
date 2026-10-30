@@ -30,6 +30,12 @@ contextBridge.exposeInMainWorld("wonnyyDesktop", {
     rescan: () => ipcRenderer.invoke("vault:rescan"),
     selectFolder: () => ipcRenderer.invoke("vault:selectFolder"),
     read: (relativePath) => ipcRenderer.invoke("vault:read", relativePath),
+    saveMarkdown: async (input) => {
+      const result = await ipcRenderer.invoke("vault:saveMarkdown", input);
+      if (!result?.ok)
+        throw new Error(result?.error || "Could not save Markdown.");
+      return result.value;
+    },
     readPdf: (relativePath) =>
       ipcRenderer.invoke("vault:readPdf", relativePath),
     search: (query) => ipcRenderer.invoke("vault:search", query),
@@ -55,6 +61,28 @@ contextBridge.exposeInMainWorld("wonnyyDesktop", {
     readBrainSource: (input) => invokeBrain("brain:readSource", input),
   },
   ai: {
+    frontOfficeState: (task) => invokeModel("ai:frontOfficeState", task),
+    frontOfficeConfig: (input) => invokeModel("ai:frontOfficeConfig", input),
+    frontOfficeRefresh: (provider) =>
+      invokeModel("ai:frontOfficeRefresh", provider),
+    frontOfficeOverride: (input) =>
+      invokeModel("ai:frontOfficeOverride", input),
+    frontOfficeEvidence: (input) =>
+      invokeModel("ai:frontOfficeEvidence", input),
+    frontOfficeFavorite: (input) =>
+      invokeModel("ai:frontOfficeFavorite", input),
+    frontOfficeHealth: () => invokeModel("ai:frontOfficeHealth"),
+    frontOfficeList: () => invokeModel("ai:frontOfficeList"),
+    frontOfficeRead: (id) => invokeModel("ai:frontOfficeRead", id),
+    frontOfficeCreate: () => invokeModel("ai:frontOfficeCreate"),
+    frontOfficeDelete: (id) => invokeModel("ai:frontOfficeDelete", id),
+    frontOfficeExport: (format) => invokeModel("ai:frontOfficeExport", format),
+    frontOfficeChat: (input) => invokeModel("ai:frontOfficeChat", input),
+    onFrontOfficeEvent: (callback) => {
+      const listener = (_, value) => callback(value);
+      ipcRenderer.on("ai:frontOfficeEvent", listener);
+      return () => ipcRenderer.removeListener("ai:frontOfficeEvent", listener);
+    },
     openRouterUsage: (input) => invokeModel("ai:openRouterUsage", input),
     onUsageChanged: (callback) => {
       const listener = () => callback();

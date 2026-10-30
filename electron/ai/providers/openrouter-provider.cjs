@@ -10,6 +10,14 @@ const catalogItem = z.object({
   id: modelId,
   name: z.string().max(300).nullable().optional(),
   context_length: z.number().int().positive().nullable().optional(),
+  supported_parameters: z.array(z.string().max(100)).max(100).optional(),
+  pricing: z
+    .object({
+      prompt: z.string().optional(),
+      completion: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
   architecture: z
     .object({
       input_modalities: z.array(z.string()).optional(),
@@ -84,6 +92,22 @@ class OpenRouterProvider extends OpenAIChatProvider {
               capabilities: ["completion"],
               contextLength: item.context_length ?? null,
               outputLimit: item.top_provider?.max_completion_tokens ?? null,
+              frontOfficeMetadata: {
+                inputModalities: item.architecture?.input_modalities,
+                outputModalities: item.architecture?.output_modalities,
+                tools: item.supported_parameters
+                  ? item.supported_parameters.includes("tools")
+                  : "unknown",
+                vision: item.architecture?.input_modalities
+                  ? item.architecture.input_modalities.includes("image")
+                  : "unknown",
+                structuredOutput: item.supported_parameters
+                  ? item.supported_parameters.includes("structured_outputs")
+                  : "unknown",
+                supportedParameters: item.supported_parameters ?? null,
+                inputUsdPerMillion: pricePerMillion(item.pricing?.prompt),
+                outputUsdPerMillion: pricePerMillion(item.pricing?.completion),
+              },
             });
           }
           if (value.data.length && !validRows)
@@ -110,3 +134,9 @@ class OpenRouterProvider extends OpenAIChatProvider {
   }
 }
 module.exports = { OpenRouterProvider };
+
+function pricePerMillion(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const price = Number(value) * 1000000;
+  return Number.isFinite(price) && price >= 0 ? price : null;
+}

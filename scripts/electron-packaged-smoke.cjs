@@ -51,7 +51,7 @@ async function main() {
     assert.match(state.csp, /script-src 'self'/);
     assert.equal(
       await page.locator(".version").textContent(),
-      "v1.0.0 Victoria Beta",
+      `v${require("../package.json").version} Victoria Beta`,
     );
     await fs.copyFile(
       "scripts/fixtures/ocr-text.png",

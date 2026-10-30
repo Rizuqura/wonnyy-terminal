@@ -183,6 +183,12 @@ declare global {
         rescan: () => Promise<VaultSnapshot>;
         selectFolder: () => Promise<VaultSnapshot | null>;
         read: (relativePath: string) => Promise<VaultFile>;
+        saveMarkdown: (input: {
+          vaultPath: string;
+          relativePath: string;
+          content: string;
+          originalContent: string;
+        }) => Promise<VaultFile>;
         readPdf: (relativePath: string) => Promise<VaultPdfFile>;
         search: (query: string) => Promise<VaultSearchResult[]>;
       };

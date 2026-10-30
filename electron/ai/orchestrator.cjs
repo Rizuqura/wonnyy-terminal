@@ -14,6 +14,9 @@ const { planDataset } = require("./dataset-planner.cjs");
 const { inspectDatasetAnswer } = require("./dataset-evidence.cjs");
 const { planStatistics, wantsStatistics } = require("./statistics.cjs");
 const { selectRuntimeSources } = require("./runtime-context.cjs");
+const {
+  createBaselineObserver,
+} = require("./llm-front-office/observability.cjs");
 
 const ANSWER_FORMAT = Object.freeze({
   type: "object",
@@ -225,6 +228,14 @@ function createContextOrchestrator({
           : {}),
         executionLocation: providerName === "ollama" ? "local" : "remote",
       };
+      const baseline = createBaselineObserver({
+        enabled: process.env.QTERMINAL_FRONT_OFFICE_METRICS !== "0",
+        requestId: options.requestId,
+        runId,
+        conversationId: options.conversationId,
+        providerId: providerName,
+        modelId: request.model,
+      });
       // Share one retry across loading, initial generation and answer repair.
       // The ChatService signal still owns the original absolute deadline.
       let generationStarted = false;
@@ -294,8 +305,10 @@ function createContextOrchestrator({
       let sourcesAvailable = [];
       let sourcesActuallyRead = [];
       let datasetSession;
-      const recordMetadata = () =>
-        options.conversationId
+      const recordMetadata = () => {
+        const trace = baseline.snapshot();
+        if (trace) diagnostics.frontOffice = trace;
+        return options.conversationId
           ? {
               schemaVersion: 2,
               conversationId: options.conversationId,
@@ -305,6 +318,7 @@ function createContextOrchestrator({
               diagnostics,
             }
           : { schemaVersion: 1 };
+      };
       try {
         stage("PREPARING_CONTEXT");
         scope = await measure("scopeMs", () =>
@@ -405,6 +419,7 @@ function createContextOrchestrator({
             manifestVersion: scope.manifestVersion,
           };
           stage("RECORDING");
+          baseline.finish("succeeded");
           await recordRun({
             ...recordMetadata(),
             runId,
@@ -575,7 +590,11 @@ function createContextOrchestrator({
               diagnostics,
               complete: (input) =>
                 recoverTimeout("GENERATING", () =>
-                  provider.complete({ ...input, id: runId, scope }),
+                  baseline.complete(
+                    provider,
+                    { ...input, id: runId, scope },
+                    "dataset-planning",
+                  ),
                 ),
             }),
           );
@@ -610,7 +629,11 @@ function createContextOrchestrator({
               signal: options.signal,
               complete: (input) =>
                 recoverTimeout("GENERATING", () =>
-                  provider.complete({ ...input, id: runId, scope }),
+                  baseline.complete(
+                    provider,
+                    { ...input, id: runId, scope },
+                    "statistics-planning",
+                  ),
                 ),
             }),
           );
@@ -667,30 +690,34 @@ function createContextOrchestrator({
         const generationStart = performance.now();
         const generate = (messages, answerRepair = false) =>
           recoverTimeout("GENERATING", () =>
-            provider.complete({
-              id: runId,
-              model: request.model,
-              messages,
-              scope,
-              format: ANSWER_FORMAT,
-              contextWindow: settings.contextWindow,
-              settings,
-              answerRepair,
-              signal: options.signal,
-              onGenerationStarted: () => {
-                generationStarted = true;
+            baseline.complete(
+              provider,
+              {
+                id: runId,
+                model: request.model,
+                messages,
+                scope,
+                format: ANSWER_FORMAT,
+                contextWindow: settings.contextWindow,
+                settings,
+                answerRepair,
+                signal: options.signal,
+                onGenerationStarted: () => {
+                  generationStarted = true;
+                },
+                onContent: (raw) => {
+                  generationStarted = true;
+                  diagnostics.timeToFirstTokenMs ??= Math.round(
+                    performance.now() - generationStart,
+                  );
+                  if (csvSources.length || diagnostics.statistics) return;
+                  const content = answerPrefix(raw);
+                  if (content)
+                    options.onEvent?.({ state: "GENERATING", content });
+                },
               },
-              onContent: (raw) => {
-                generationStarted = true;
-                diagnostics.timeToFirstTokenMs ??= Math.round(
-                  performance.now() - generationStart,
-                );
-                if (csvSources.length || diagnostics.statistics) return;
-                const content = answerPrefix(raw);
-                if (content)
-                  options.onEvent?.({ state: "GENERATING", content });
-              },
-            }),
+              answerRepair ? "answer-repair" : "generation",
+            ),
           );
         let response = await measure("generationMs", () =>
           generate(prompt.messages),
@@ -878,6 +905,7 @@ function createContextOrchestrator({
           diagnostics,
         };
         stage("RECORDING");
+        baseline.finish("succeeded");
         await recordRun({
           ...recordMetadata(),
           runId,
@@ -928,6 +956,10 @@ function createContextOrchestrator({
           );
         const completedMs = now();
         const failure = serializeRunError(error);
+        baseline.finish(
+          failure.code === "MODEL_CANCELLED" ? "cancelled" : "failed",
+          error,
+        );
         try {
           await recordRun({
             ...recordMetadata(),

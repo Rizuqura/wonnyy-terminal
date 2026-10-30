@@ -1,6 +1,6 @@
 {
   "name": "qterminal",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local-first AI-native knowledge and research workspace",
   "private": true,
   "license": "UNLICENSED",
@@ -51,8 +51,13 @@
     "test:single-file:electron": "npm run build && node scripts/electron-single-file-smoke.cjs",
     "test:message-retry:electron": "npm run build && node scripts/electron-message-retry-smoke.cjs",
     "test:pdf-image:electron": "npm run build && node scripts/electron-pdf-image-smoke.cjs",
+    "test:markdown:electron": "npm run build && node scripts/electron-markdown-editor-smoke.cjs",
     "test:runtime-kernel:electron": "npm run build && node scripts/electron-runtime-kernel-smoke.cjs",
-    "report:runtime-kernel": "node scripts/runtime-kernel-report.cjs"
+    "report:runtime-kernel": "node scripts/runtime-kernel-report.cjs",
+    "test:front-office": "node --test electron/ai/front-office*.test.cjs",
+    "test:front-office:electron": "npm run build && node scripts/electron-front-office-smoke.cjs",
+    "benchmark:front-office": "node scripts/front-office-benchmark.cjs --mock",
+    "benchmark:front-office:live": "node scripts/front-office-benchmark.cjs --live"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.13",

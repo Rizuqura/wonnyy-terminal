@@ -66,7 +66,7 @@ async function main() {
       );
       assert.equal(
         await page.locator(".version").textContent(),
-        "v1.0.0 Victoria Beta",
+        `v${require("../package.json").version} Victoria Beta`,
       );
     }
     await page.getByRole("button", { name: "AGENT", exact: true }).click();

@@ -899,7 +899,7 @@ async function main() {
       return;
     }
     await panel().getByText("No active chat", { exact: true }).waitFor();
-    assert.equal(await page.title(), "QTerminal 1.0.0 Victoria");
+    assert.equal(await page.title(), "QTerminal");
     assert.equal(await countChats(), 0);
     await panel()
       .getByRole("button", { name: "+ New Chat", exact: true })

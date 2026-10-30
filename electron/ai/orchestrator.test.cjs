@@ -607,6 +607,9 @@ test("empty readable context records an insufficient result without loading, gen
   );
   assert.equal(result.diagnostics.contextInsufficient, true);
   assert.equal(result.diagnostics.modelExecuted, false);
+  assert.equal(result.diagnostics.frontOffice.status, "succeeded");
+  assert.equal(result.diagnostics.frontOffice.providerCallCount, 0);
+  assert.equal(result.diagnostics.frontOffice.usageCoverage, "none");
   assert.equal(records.length, 1);
   assert.equal(records[0].status, "succeeded");
   assert.equal(records[0].sourcesActuallyRead[0].contentHash, hash);

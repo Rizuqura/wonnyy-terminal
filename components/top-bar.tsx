@@ -20,7 +20,7 @@ export function TopBar({
           height={16}
         />
         <span>QTerminal</span>
-        <span className="version">v1.0.0 Victoria Beta</span>
+        <span className="version">v1.0.1 Victoria Beta</span>
       </div>
       <nav className="top-nav" aria-label="Primary">
         <button

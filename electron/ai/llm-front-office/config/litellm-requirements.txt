@@ -1,0 +1,2 @@
+# Optional external service; not bundled with Electron.
+litellm[proxy]==1.106.6

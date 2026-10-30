@@ -371,6 +371,15 @@ export function useChatRuntime({
     await bridge.current?.stopModelChecks().catch(() => {});
     await operationDone.current;
   }, []);
+  // The experiment panel shares backend admission with normal model checks,
+  // but has its own request state. Prioritize an explicit user operation and
+  // await the existing check/mutation cleanup instead of racing MODEL_BUSY.
+  const prepareBasicChat = useCallback(async () => {
+    checkedLoadedKeys.current.add("gemini");
+    checkedLoadedKeys.current.add("nvidia");
+    await interruptChecks();
+    await operationDone.current;
+  }, [interruptChecks]);
   const operate = useCallback(
     async (
       operation: (client: AiBridge, current: () => boolean) => Promise<void>,
@@ -1266,6 +1275,7 @@ export function useChatRuntime({
     checkModel,
     recheckModels,
     stopModelChecks,
+    prepareBasicChat,
     removeCredential,
   };
 }

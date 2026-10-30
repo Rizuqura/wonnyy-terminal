@@ -280,6 +280,36 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+.markdown-editor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.markdown-editor-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #b9bdb4;
+  font: 11px var(--font-terminal);
+}
+.markdown-editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52vh;
+  resize: vertical;
+  padding: 16px;
+  border: 1px solid #635334;
+  border-radius: 4px;
+  background: #0d1112;
+  color: #d3d6cf;
+  font: 13px/1.65 var(--font-terminal);
+  tab-size: 2;
+}
+.markdown-editor:focus-visible {
+  outline: 2px solid #dbb77a;
+  outline-offset: 2px;
+}
 .document-context-toolbar p {
   flex-basis: 100%;
   margin: 0;

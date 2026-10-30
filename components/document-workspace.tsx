@@ -9,6 +9,13 @@ export function DocumentWorkspace({
   contextBusy,
   contextApproved,
   contextError,
+  markdownDraft = null,
+  markdownSaving,
+  markdownError,
+  onEditMarkdown,
+  onMarkdownChange,
+  onSaveMarkdown,
+  onCancelMarkdown,
 }: Readonly<{
   file: VaultFile | VaultPdfFile | null;
   error?: string | null;
@@ -17,6 +24,13 @@ export function DocumentWorkspace({
   contextBusy?: boolean;
   contextApproved?: boolean;
   contextError?: string | null;
+  markdownDraft?: string | null;
+  markdownSaving?: boolean;
+  markdownError?: string | null;
+  onEditMarkdown?: () => void;
+  onMarkdownChange?: (content: string) => void;
+  onSaveMarkdown?: () => void;
+  onCancelMarkdown?: () => void;
 }>) {
   if (error)
     return (
@@ -162,19 +176,53 @@ export function DocumentWorkspace({
         <PdfViewer file={file} />
       </section>
     );
+  const isMarkdown = file.extension === ".md" || file.extension === ".markdown";
+  const editing = isMarkdown && markdownDraft !== null;
+  const dirty =
+    editing && markdownDraft !== file.content.replace(/\r\n/g, "\n");
   return (
     <section className="document-pane">
       <div className="tab-strip">
-        <button className="active-tab">{file.name}</button>
+        <button className="active-tab">
+          {file.name}
+          {dirty ? " *" : ""}
+        </button>
         <button
           className="tab-close"
           aria-label="Close document"
+          disabled={markdownSaving}
           onClick={onClose}
         >
           ×
         </button>
       </div>
       <div className="document-context-toolbar">
+        {isMarkdown && (
+          <div className="markdown-editor-actions">
+            {editing ? (
+              <>
+                <button
+                  onClick={onSaveMarkdown}
+                  disabled={markdownSaving || !dirty}
+                >
+                  {markdownSaving ? "Saving..." : "Save"}
+                </button>
+                <button onClick={onCancelMarkdown} disabled={markdownSaving}>
+                  Cancel
+                </button>
+                <span role="status">
+                  {markdownSaving
+                    ? "Saving to vault"
+                    : dirty
+                      ? "Unsaved changes"
+                      : "No changes"}
+                </span>
+              </>
+            ) : (
+              <button onClick={onEditMarkdown}>Edit Markdown</button>
+            )}
+          </div>
+        )}
         <span>Read · Select · Build context</span>
         <button
           onClick={onAddToContext}
@@ -182,11 +230,14 @@ export function DocumentWorkspace({
         >
           {contextApproved
             ? "In active context"
-            : contextBusy
-              ? "Preparing context…"
-              : "Add file to context"}
+            : editing
+              ? "Save before adding to context"
+              : contextBusy
+                ? "Preparing context…"
+                : "Add file to context"}
         </button>
         {contextError && <p role="alert">{contextError}</p>}
+        {markdownError && <p role="alert">{markdownError}</p>}
       </div>
       <article className="document-scroll">
         <div className="document-inner">
@@ -194,7 +245,9 @@ export function DocumentWorkspace({
             {segments.slice(0, -1).join(" / ")}
             {segments.length > 1 ? " / " : ""}
             <b>{file.name}</b>
-            <span className="reading-pill">READING</span>
+            <span className="reading-pill">
+              {editing ? "EDITING" : "READING"}
+            </span>
           </div>
           <header className="document-header">
             <h1>
@@ -208,7 +261,39 @@ export function DocumentWorkspace({
               <b>{file.extension.toUpperCase()}</b> · {file.relativePath}
             </p>
           </header>
-          {file.extension === ".csv" ? (
+          {editing ? (
+            <div className="document-section">
+              <label
+                className="markdown-editor-label"
+                htmlFor="markdown-editor"
+              >
+                Markdown source
+              </label>
+              <textarea
+                id="markdown-editor"
+                className="markdown-editor"
+                aria-label="Markdown source"
+                autoFocus
+                spellCheck={false}
+                disabled={markdownSaving}
+                value={markdownDraft}
+                onChange={(event) => onMarkdownChange?.(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    (event.ctrlKey || event.metaKey) &&
+                    event.key.toLowerCase() === "s"
+                  ) {
+                    event.preventDefault();
+                    if (dirty && !markdownSaving) onSaveMarkdown?.();
+                  }
+                }}
+              />
+              <p>
+                Save to update this vault file. Ctrl+S / Cmd+S saves your
+                changes.
+              </p>
+            </div>
+          ) : file.extension === ".csv" ? (
             <CsvTable content={file.content} />
           ) : (
             <MarkdownContent content={file.content} />

@@ -498,3 +498,159 @@ html:has(.ai-terminal),
 body:has(.ai-terminal) {
   min-width: 0;
 }
+
+.front-office-panel {
+  margin: 20px 0;
+  padding: 20px;
+  border: 1px solid #d2d2cc;
+  border-radius: 12px;
+  background: #f8f8f4;
+  color: #292d31;
+}
+.front-office-panel > summary {
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 650;
+}
+.front-office-panel p {
+  max-width: 100ch;
+  line-height: 1.6;
+  font-size: 13px;
+}
+.front-office-panel fieldset,
+.front-office-panel section,
+.front-office-panel details {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid #deded7;
+  border-radius: 8px;
+  min-width: 0;
+}
+.front-office-panel label {
+  display: inline-flex;
+  gap: 8px;
+  flex-direction: column;
+  margin: 8px 14px 8px 0;
+  font-size: 12px;
+  vertical-align: top;
+}
+.front-office-panel label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+}
+.front-office-panel input,
+.front-office-panel select,
+.front-office-panel textarea {
+  border: 1px solid #bcbeb8;
+  padding: 8px 10px;
+  border-radius: 5px;
+  background: white;
+  color: #24282b;
+  max-width: 100%;
+}
+.front-office-panel textarea {
+  display: block;
+  width: 100%;
+  min-width: 240px;
+  font-family: Consolas, monospace;
+  resize: vertical;
+}
+.front-office-panel label:has(textarea) {
+  display: flex;
+  width: 100%;
+}
+.front-office-panel button {
+  margin: 6px;
+  padding: 8px 12px;
+  border: 1px solid #afb5ae;
+  border-radius: 6px;
+  background: #fff;
+  color: #253e32;
+  cursor: pointer;
+}
+.front-office-panel button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.front-office-panel :focus-visible {
+  outline: 2px solid #467b5b;
+  outline-offset: 3px;
+}
+.front-office-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  max-height: 350px;
+  overflow: auto;
+}
+.front-office-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+.front-office-panel table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.front-office-panel th,
+.front-office-panel td {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid #d4d9d1;
+  vertical-align: top;
+}
+.front-office-panel small {
+  display: block;
+  margin-top: 6px;
+  color: #555f58;
+  overflow-wrap: anywhere;
+}
+.front-office-panel caption {
+  text-align: left;
+  padding: 8px;
+}
+.front-office-history {
+  max-height: 500px;
+  overflow-y: auto;
+}
+.front-office-history article {
+  padding: 12px;
+  margin-bottom: 8px;
+  border-left: 2px solid #93ae99;
+  background: #fff;
+}
+.front-office-error {
+  color: #9e2830;
+}
+
+/* Keep engineering controls readable inside the existing terminal theme. */
+.model-settings.ai-terminal .front-office-panel label,
+.model-settings.ai-terminal .front-office-panel p,
+.model-settings.ai-terminal .front-office-panel summary {
+  color: #3b5145;
+}
+.model-settings.ai-terminal .front-office-panel input,
+.model-settings.ai-terminal .front-office-panel select,
+.model-settings.ai-terminal .front-office-panel textarea {
+  /* The shared soft-surfaces sheet uses an important dark input fill. */
+  background-color: #fff !important;
+  color: #203b2b;
+  border-color: #9eada2;
+}
+.model-settings.ai-terminal .front-office-panel {
+  color-scheme: light;
+}
+.model-settings.ai-terminal .front-office-panel pre {
+  background: #fff;
+  color: #263e30;
+  padding: 12px;
+  border: 1px solid #d8e0d9;
+}
+.model-settings.ai-terminal .front-office-panel button {
+  background: #fff;
+  color: #264b34;
+  border-color: #a7b9ac;
+}
+.model-settings.ai-terminal .front-office-panel .front-office-error {
+  color: #9e2830;
+}

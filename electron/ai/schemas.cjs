@@ -19,7 +19,7 @@ function parse(
 const providerId = z.enum(["ollama", "gemini", "nvidia", "openrouter"]);
 const credentialInput = z
   .object({
-    providerId: z.enum(["gemini", "nvidia", "openrouter"]),
+    providerId: z.enum(["gemini", "nvidia", "openrouter", "litellm"]),
     apiKey: z
       .string()
       .trim()
@@ -30,18 +30,20 @@ const credentialInput = z
   })
   .strict();
 const credentialProvider = z
-  .object({ providerId: z.enum(["gemini", "nvidia", "openrouter"]) })
+  .object({ providerId: z.enum(["gemini", "nvidia", "openrouter", "litellm"]) })
   .strict();
 function parseCredential(input) {
   return parse(
     credentialInput,
     input,
     "MODEL_INVALID_REQUEST",
-    input?.providerId === "openrouter"
-      ? "Enter the complete OpenRouter API key without quotes or spaces."
-      : input?.providerId === "nvidia"
-        ? "Enter the complete NVIDIA API key without quotes or spaces."
-        : "Enter the complete Gemini API key from Google AI Studio, without quotes or spaces. Both AQ. authorization keys and legacy AIza keys are supported.",
+    input?.providerId === "litellm"
+      ? "Enter the complete local LiteLLM gateway key without quotes or spaces."
+      : input?.providerId === "openrouter"
+        ? "Enter the complete OpenRouter API key without quotes or spaces."
+        : input?.providerId === "nvidia"
+          ? "Enter the complete NVIDIA API key without quotes or spaces."
+          : "Enter the complete Gemini API key from Google AI Studio, without quotes or spaces. Both AQ. authorization keys and legacy AIza keys are supported.",
   );
 }
 const settingsSchema = z

@@ -65,6 +65,10 @@ function validateSource(value, field, allowMissingHash = false) {
 }
 
 function validateRunRecord(value) {
+  if (value?.schemaVersion === 3)
+    return require("./llm-front-office/conversation-manager.cjs").validateExperimentalRun(
+      value,
+    );
   if (!value || typeof value !== "object" || Array.isArray(value))
     invalidRecord("Model run record must be an object.");
   const allowed = new Set([
