@@ -6,6 +6,35 @@ const path = require("node:path");
 const { CredentialStore } = require("./credential-store.cjs");
 const { parseCredential } = require("./schemas.cjs");
 
+test("optional LiteLLM credential uses OS encryption and remains isolated from provider credentials", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "qterminal-gateway-key-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const encryption = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(value.split("").reverse().join("")),
+    decryptString: (bytes) => bytes.toString().split("").reverse().join(""),
+  };
+  const store = new CredentialStore(root, encryption);
+  await store.save({
+    providerId: "openrouter",
+    apiKey: "synthetic-provider-key",
+  });
+  await store.save({ providerId: "litellm", apiKey: "synthetic-gateway-key" });
+  assert.doesNotMatch(
+    await fs.readFile(store.file, "utf8"),
+    /synthetic-gateway-key|synthetic-provider-key/,
+  );
+  assert.equal(
+    await new CredentialStore(root, encryption).get("litellm"),
+    "synthetic-gateway-key",
+  );
+  await store.remove({ providerId: "litellm" });
+  assert.equal(await store.get("openrouter"), "synthetic-provider-key");
+  assert.equal((await store.status("litellm")).configured, false);
+});
+
 test("OpenRouter keys use encrypted storage and preserve existing provider keys through restart and removal", async (t) => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "qterminal-openrouter-"),

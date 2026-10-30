@@ -561,6 +561,81 @@ async function readVaultFile(rootPath, relativePath) {
   };
 }
 
+// Explicit user editing only. Never expose this operation as an AI tool.
+async function saveMarkdownFile(rootPath, input) {
+  if (
+    !input ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    Object.keys(input).some(
+      (key) =>
+        !["vaultPath", "relativePath", "content", "originalContent"].includes(
+          key,
+        ),
+    ) ||
+    typeof input.vaultPath !== "string" ||
+    typeof input.relativePath !== "string" ||
+    typeof input.content !== "string" ||
+    typeof input.originalContent !== "string"
+  )
+    throw new Error("Invalid Markdown save request.");
+  if (path.resolve(input.vaultPath) !== path.resolve(rootPath))
+    throw new Error("The active vault changed. Reopen the file before saving.");
+  if (Buffer.byteLength(input.content, "utf8") > 10 * 1024 * 1024)
+    throw new Error("Markdown editing supports files up to 10 MB.");
+  const absolutePath = resolveVaultFile(rootPath, input.relativePath);
+  if (!/\.(md|markdown)$/i.test(absolutePath))
+    throw new Error("Only Markdown files can be edited.");
+  const assertTarget = async () => {
+    const parts = path
+      .relative(path.resolve(rootPath), absolutePath)
+      .split(path.sep);
+    let current = path.resolve(rootPath);
+    for (const part of parts) {
+      if ([".wonnyy", ".git", "node_modules"].includes(part.toLowerCase()))
+        throw new Error("Application metadata cannot be edited.");
+      current = path.join(current, part);
+      if ((await fs.lstat(current)).isSymbolicLink())
+        throw new Error("Linked files or folders cannot be edited.");
+    }
+    return statVaultFile(rootPath, input.relativePath);
+  };
+  const { stats } = await assertTarget();
+  if (stats.size > 10 * 1024 * 1024)
+    throw new Error("Markdown editing supports files up to 10 MB.");
+  if ((await fs.readFile(absolutePath, "utf8")) !== input.originalContent)
+    throw new Error(
+      "This file changed on disk. Copy your edits, then reopen the file before saving.",
+    );
+  const temporary = path.join(
+    path.dirname(absolutePath),
+    `.qterminal-${require("node:crypto").randomUUID()}.tmp`,
+  );
+  try {
+    await fs.writeFile(temporary, input.content, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: stats.mode,
+    });
+    await assertTarget();
+    if ((await fs.readFile(absolutePath, "utf8")) !== input.originalContent)
+      throw new Error(
+        "This file changed on disk. Copy your edits, then reopen the file before saving.",
+      );
+    await fs.rename(temporary, absolutePath);
+  } finally {
+    await fs.unlink(temporary).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+  return {
+    name: path.basename(absolutePath),
+    relativePath: input.relativePath,
+    extension: path.extname(absolutePath).toLowerCase(),
+    content: input.content,
+  };
+}
+
 async function readPdfFile(rootPath, relativePath) {
   const { absolutePath, stats } = await statVaultFile(
     rootPath,
@@ -644,6 +719,7 @@ module.exports = {
   getIndexedPdfText,
   readPdfFile,
   readVaultFile,
+  saveMarkdownFile,
   resolveVaultFile,
   scanVault,
   searchPdfText,

@@ -30,6 +30,12 @@ const schema = z
       .regex(/^[A-Za-z0-9+/]+={0,2}$/)
       .nullable()
       .optional(),
+    litellm: z
+      .string()
+      .max(16384)
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -106,7 +112,7 @@ class CredentialStore {
     if (!state[providerId])
       throw new ModelRuntimeError(
         "AUTH_REQUIRED",
-        `Add a ${providerId === "openrouter" ? "OpenRouter" : providerId === "nvidia" ? "NVIDIA" : "Gemini"} API key in Settings.`,
+        `Add a ${providerId === "litellm" ? "local LiteLLM gateway" : providerId === "openrouter" ? "OpenRouter" : providerId === "nvidia" ? "NVIDIA" : "Gemini"} API key in Settings.`,
       );
     if (!this.available())
       throw new ModelRuntimeError(

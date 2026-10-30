@@ -18,6 +18,7 @@ const {
 const {
   readPdfFile,
   readVaultFile,
+  saveMarkdownFile,
   scanVault,
   searchPdfText,
 } = require("./vault-service.cjs");
@@ -110,6 +111,19 @@ function createWindow() {
     },
   });
   mainWindow = window;
+  window.webContents.on("will-prevent-unload", (event) => {
+    const response = dialog.showMessageBoxSync(window, {
+      type: "question",
+      buttons: ["Keep editing", "Discard changes"],
+      defaultId: 0,
+      cancelId: 0,
+      message: "Leave without saving Markdown changes?",
+      detail:
+        "Unsaved edits will be lost. Wait for any save to finish before leaving.",
+    });
+    // Electron uses preventDefault here to allow the requested close/reload.
+    if (response === 1) event.preventDefault();
+  });
   window.webContents.session.setPermissionRequestHandler((_, __, callback) =>
     callback(false),
   );
@@ -165,6 +179,18 @@ app.whenReady().then(async () => {
   trustedIpc.handle("vault:read", (_, relativePath) =>
     readVaultFile(activeVaultPath, relativePath),
   );
+  trustedIpc.handle("vault:saveMarkdown", async (_, input) => {
+    try {
+      return {
+        ok: true,
+        value: await changeVaultKnowledge((vaultPath) =>
+          saveMarkdownFile(vaultPath, input),
+        ),
+      };
+    } catch (error) {
+      return { ok: false, error: error.message || "Could not save Markdown." };
+    }
+  });
   trustedIpc.handle("vault:readPdf", (_, relativePath) =>
     readPdfFile(activeVaultPath, relativePath),
   );

@@ -8,6 +8,7 @@ const {
   MAX_PDF_BYTES,
   readPdfFile,
   readVaultFile,
+  saveMarkdownFile,
   resolveVaultFile,
   scanVault,
   searchPdfText,
@@ -21,6 +22,104 @@ async function withVault(run) {
     await fs.rm(vaultPath, { recursive: true, force: true });
   }
 }
+
+test("Markdown saves preserve text, reject stale edits and leave no temporary files", async () => {
+  await withVault(async (vaultPath) => {
+    const target = path.join(vaultPath, "note.markdown");
+    const originalContent = "# Original\r\n";
+    await fs.writeFile(target, originalContent);
+    const request = {
+      vaultPath,
+      relativePath: "note.markdown",
+      originalContent,
+      content: "# Edited é\r\n",
+    };
+    const saved = await saveMarkdownFile(vaultPath, request);
+    assert.equal(saved.content, request.content);
+    assert.equal(await fs.readFile(target, "utf8"), request.content);
+    await assert.rejects(
+      saveMarkdownFile(vaultPath, request),
+      /changed on disk/,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), request.content);
+    await saveMarkdownFile(vaultPath, {
+      ...request,
+      originalContent: request.content,
+      content: "",
+    });
+    assert.equal(await fs.readFile(target, "utf8"), "");
+    assert.deepEqual(await fs.readdir(vaultPath), ["note.markdown"]);
+  });
+});
+
+test("Markdown save rejects other types, metadata, wrong vault, invalid and oversized input", async () => {
+  await withVault(async (vaultPath) => {
+    await fs.mkdir(path.join(vaultPath, ".wonnyy"));
+    for (const name of ["data.csv", ".wonnyy/note.md", "note.md"])
+      await fs.writeFile(path.join(vaultPath, name), "original");
+    const request = {
+      vaultPath,
+      relativePath: "note.md",
+      originalContent: "original",
+      content: "edited",
+    };
+    for (const relativePath of ["data.csv", ".wonnyy/note.md", "../outside.md"])
+      await assert.rejects(
+        saveMarkdownFile(vaultPath, { ...request, relativePath }),
+      );
+    await assert.rejects(
+      saveMarkdownFile(vaultPath, {
+        ...request,
+        vaultPath: path.join(vaultPath, "other"),
+      }),
+      /vault changed/,
+    );
+    await assert.rejects(
+      saveMarkdownFile(vaultPath, { ...request, extra: true }),
+      /Invalid/,
+    );
+    await assert.rejects(
+      saveMarkdownFile(vaultPath, {
+        ...request,
+        content: "x".repeat(10 * 1024 * 1024 + 1),
+      }),
+      /10 MB/,
+    );
+    assert.equal(
+      await fs.readFile(path.join(vaultPath, "note.md"), "utf8"),
+      "original",
+    );
+    assert.equal(
+      await fs.readFile(path.join(vaultPath, "data.csv"), "utf8"),
+      "original",
+    );
+  });
+});
+
+test("Markdown save rejects linked parent directories", async () => {
+  await withVault(async (vaultPath) => {
+    await fs.mkdir(path.join(vaultPath, "actual"));
+    await fs.writeFile(path.join(vaultPath, "actual", "note.md"), "original");
+    await fs.symlink(
+      path.join(vaultPath, "actual"),
+      path.join(vaultPath, "linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await assert.rejects(
+      saveMarkdownFile(vaultPath, {
+        vaultPath,
+        relativePath: "linked/note.md",
+        originalContent: "original",
+        content: "edited",
+      }),
+      /Linked/,
+    );
+    assert.equal(
+      await fs.readFile(path.join(vaultPath, "actual", "note.md"), "utf8"),
+      "original",
+    );
+  });
+});
 
 function minimalPdf(text) {
   const stream = `BT\n/F1 18 Tf\n72 720 Td\n(${text.replace(/[()\\]/g, "\\$&")}) Tj\nET`;

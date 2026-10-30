@@ -37,6 +37,22 @@ test("runtime kernel compacts the known policy while keeping bindings, ordinary 
     /## 30\. FINAL OPERATING PRINCIPLES/,
   );
   assert.deepEqual(result.run.diagnostics.evidenceSourceIds, ["a.md"]);
+  const baseline = result.run.diagnostics.frontOffice;
+  assert.equal(baseline.mode, "existing-agent-baseline");
+  assert.equal(
+    baseline.requestId,
+    result.conversation.attempts.at(-1).requestId,
+  );
+  assert.equal(baseline.runId, result.run.runId);
+  assert.equal(baseline.providerCallCount, 1);
+  assert.equal(baseline.calls[0].phase, "generation");
+  assert.equal(baseline.status, "succeeded");
+  assert.equal(baseline.estimatedCostUsd, null);
+  assert.equal(JSON.stringify(baseline).includes("ALPHA"), false);
+  assert.deepEqual(
+    (await readModelRun(f.root, result.run.runId)).diagnostics.frontOffice,
+    baseline,
+  );
   assert.equal(
     result.run.diagnostics.runtimePolicy.canonicalHash,
     canonicalHash,
@@ -1117,6 +1133,14 @@ test("pre-generation timeout recovery retains one turn and one audit", async (t)
     assert.equal(result.conversation.messages.length, 2);
     assert.equal(result.conversation.attempts.length, 1);
     assert.equal(result.run.diagnostics.timeoutRetryCount, 1);
+    const baseline = result.run.diagnostics.frontOffice;
+    assert.equal(baseline.providerCallCount, phase === "load" ? 1 : 2);
+    assert.equal(baseline.status, "succeeded");
+    if (phase === "generation") {
+      assert.equal(baseline.calls[0].status, "failed");
+      assert.equal(baseline.calls[0].errorCode, "MODEL_TIMEOUT");
+      assert.equal(baseline.usageCoverage, "none");
+    }
     assert.equal(result.run.status, "succeeded");
     assert.ok(
       events.some(

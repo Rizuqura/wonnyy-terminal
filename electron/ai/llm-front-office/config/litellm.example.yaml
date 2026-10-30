@@ -1,0 +1,21 @@
+# Optional externally managed loopback service. No real keys or prompts here.
+# Bind with: litellm --config litellm.example.yaml --host 127.0.0.1 --port 4000
+model_list:
+  - model_name: "openrouter/*"
+    litellm_params:
+      model: "openrouter/*"
+      api_key: os.environ/OPENROUTER_API_KEY
+  - model_name: "nvidia_nim/*"
+    litellm_params:
+      model: "nvidia_nim/*"
+      api_key: os.environ/NVIDIA_NIM_API_KEY
+litellm_settings:
+  drop_params: false
+  set_verbose: false
+  num_retries: 0
+  fallbacks: []
+router_settings:
+  num_retries: 0
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  disable_spend_logs: true

@@ -80,6 +80,36 @@ export function AppShell() {
     null,
   );
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [markdownDraft, setMarkdownDraft] = useState<string | null>(null);
+  const [markdownSaving, setMarkdownSaving] = useState(false);
+  const [markdownError, setMarkdownError] = useState<string | null>(null);
+  const markdownDirty =
+    markdownDraft !== null &&
+    openedFile !== null &&
+    "content" in openedFile &&
+    markdownDraft !== openedFile.content.replace(/\r\n/g, "\n");
+  const editorGuard = useRef({ dirty: false, saving: false });
+  editorGuard.current = { dirty: markdownDirty, saving: markdownSaving };
+  const canLeaveDocument = useCallback(async () => {
+    if (editorGuard.current.saving) return false;
+    return (
+      !editorGuard.current.dirty ||
+      (await confirm(
+        "Your Markdown changes have not been saved. Discard them?",
+        "Discard changes",
+      ))
+    );
+  }, [confirm]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (editorGuard.current.dirty || editorGuard.current.saving) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
   const [view, setView] = useState<View>("planet");
   const [planetFocus, setPlanetFocus] = useState(false);
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
@@ -218,6 +248,8 @@ export function AppShell() {
     setSnapshot(next);
     setSelectedIds([]);
     setOpenedFile(null);
+    setMarkdownDraft(null);
+    setMarkdownError(null);
     setWorkspaceError(null);
     setFocusId(null);
     setPdfSearchResults([]);
@@ -225,6 +257,7 @@ export function AppShell() {
   }, []);
 
   const rescanVault = useCallback(async () => {
+    if (!(await canLeaveDocument())) return;
     const version = ++vaultLoadVersion.current;
     setIsScanning(true);
     setVaultError(null);
@@ -243,13 +276,14 @@ export function AppShell() {
     } finally {
       if (version === vaultLoadVersion.current) setIsScanning(false);
     }
-  }, [applySnapshot, loadStationState]);
+  }, [applySnapshot, loadStationState, canLeaveDocument]);
 
   useEffect(() => {
     void rescanVault();
   }, [rescanVault]);
 
   const changeVault = useCallback(async () => {
+    if (!(await canLeaveDocument())) return;
     const version = ++vaultLoadVersion.current;
     setIsScanning(true);
     try {
@@ -275,7 +309,7 @@ export function AppShell() {
     } finally {
       if (version === vaultLoadVersion.current) setIsScanning(false);
     }
-  }, [applySnapshot, loadStationState]);
+  }, [applySnapshot, loadStationState, canLeaveDocument]);
 
   const stationMutation = useCallback(
     async (operation: () => Promise<StationState>) => {
@@ -376,26 +410,79 @@ export function AppShell() {
     [selectEntry, view, vaultQuery, navigateToSearchResult],
   );
 
-  const openVaultFile = useCallback(async (relativePath: string) => {
-    setWorkspaceError(null);
-    try {
-      const vault = requireVaultBridge();
-      setOpenedFile(
-        relativePath.toLocaleLowerCase().endsWith(".pdf")
+  const openVaultFile = useCallback(
+    async (relativePath: string) => {
+      if (!(await canLeaveDocument())) return;
+      const version = vaultLoadVersion.current;
+      setMarkdownDraft(null);
+      setMarkdownError(null);
+      setWorkspaceError(null);
+      try {
+        const vault = requireVaultBridge();
+        const file = relativePath.toLocaleLowerCase().endsWith(".pdf")
           ? await vault.readPdf(relativePath)
-          : await vault.read(relativePath),
-      );
-      setView("workspace");
+          : await vault.read(relativePath);
+        if (version !== vaultLoadVersion.current) return;
+        setOpenedFile(file);
+        setView("workspace");
+      } catch (error) {
+        if (version !== vaultLoadVersion.current) return;
+        setOpenedFile(null);
+        setWorkspaceError(
+          error instanceof Error
+            ? error.message
+            : "QTerminal could not open this file.",
+        );
+        setView("workspace");
+      }
+    },
+    [canLeaveDocument],
+  );
+
+  const saveMarkdown = async () => {
+    if (
+      !openedFile ||
+      !("content" in openedFile) ||
+      markdownDraft === null ||
+      markdownSaving
+    )
+      return;
+    const vaultPath = snapshot?.rootPath;
+    if (!vaultPath) return;
+    setMarkdownSaving(true);
+    setMarkdownError(null);
+    try {
+      const bridge = requireVaultBridge();
+      if (!bridge.saveMarkdown)
+        throw new Error("Restart QTerminal to enable Markdown saving.");
+      const content = openedFile.content.includes("\r\n")
+        ? markdownDraft.replace(/\n/g, "\r\n")
+        : markdownDraft;
+      const saved = await bridge.saveMarkdown({
+        vaultPath,
+        relativePath: openedFile.relativePath,
+        originalContent: openedFile.content,
+        content,
+      });
+      setOpenedFile(saved);
+      setMarkdownDraft(null);
+      // Refresh source fingerprints and context readiness without closing the document.
+      try {
+        setSnapshot(await bridge.rescan());
+        await loadStationState(vaultLoadVersion.current);
+      } catch {
+        setVaultError(
+          "Markdown saved. Rescan the vault to refresh source status.",
+        );
+      }
     } catch (error) {
-      setOpenedFile(null);
-      setWorkspaceError(
-        error instanceof Error
-          ? error.message
-          : "QTerminal could not open this file.",
+      setMarkdownError(
+        error instanceof Error ? error.message : "Could not save Markdown.",
       );
-      setView("workspace");
+    } finally {
+      setMarkdownSaving(false);
     }
-  }, []);
+  };
 
   const searchPdfText = useCallback(async (query: string) => {
     if (!query.trim()) {
@@ -941,12 +1028,31 @@ export function AppShell() {
             {vaultSidebar}
             <DocumentWorkspace
               file={openedFile}
+              markdownDraft={markdownDraft}
+              markdownSaving={markdownSaving}
+              markdownError={markdownError}
+              onEditMarkdown={() => {
+                if (openedFile && "content" in openedFile) {
+                  setMarkdownDraft(openedFile.content.replace(/\r\n/g, "\n"));
+                  setMarkdownError(null);
+                }
+              }}
+              onMarkdownChange={setMarkdownDraft}
+              onSaveMarkdown={() => void saveMarkdown()}
+              onCancelMarkdown={async () => {
+                if (await canLeaveDocument()) {
+                  setMarkdownDraft(null);
+                  setMarkdownError(null);
+                }
+              }}
               error={workspaceError}
               onAddToContext={() =>
                 openedFile &&
                 void addSelectedToContext([openedFile.relativePath])
               }
-              contextBusy={stationBusy || chat.busy || isScanning}
+              contextBusy={
+                stationBusy || chat.busy || isScanning || markdownDraft !== null
+              }
               contextApproved={Boolean(
                 openedFile &&
                 brainScope?.mode === "active-context" &&
@@ -958,8 +1064,11 @@ export function AppShell() {
                 ),
               )}
               contextError={stationError}
-              onClose={() => {
+              onClose={async () => {
+                if (!(await canLeaveDocument())) return;
                 setOpenedFile(null);
+                setMarkdownDraft(null);
+                setMarkdownError(null);
                 setWorkspaceError(null);
               }}
             />

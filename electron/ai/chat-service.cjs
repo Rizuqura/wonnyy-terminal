@@ -113,7 +113,9 @@ class ChatService {
     return contextIdentity(scope);
   }
   async list(vault) {
-    return (await this.store(vault)).store.list();
+    return (await (await this.store(vault)).store.list()).filter(
+      (c) => c.schemaVersion !== 5,
+    );
   }
   async listBoxes(vault) {
     return (await this.store(vault)).boxes.list();
@@ -520,7 +522,8 @@ class ChatService {
     return this.exclusive(async () => {
       const { store } = await this.store(vault);
       for (const conversation of await store.list())
-        await store.remove(conversation.id);
+        if (conversation.schemaVersion !== 5)
+          await store.remove(conversation.id);
     });
   }
   async resume(vault, id) {
@@ -581,6 +584,11 @@ class ChatService {
     try {
       ({ root, store } = await this.store(vault));
       let conversation = await store.read(input.conversationId);
+      if (conversation.schemaVersion === 5)
+        throw new ModelRuntimeError(
+          "MODEL_INVALID_REQUEST",
+          "Use the experimental chat entry point for this conversation.",
+        );
       const agentConfig = this.agents
         ? await this.agents.get(conversation.agentId)
         : null;

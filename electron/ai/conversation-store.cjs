@@ -22,6 +22,10 @@ function validId(id) {
 }
 
 function validateConversation(value) {
+  if (value?.schemaVersion === 5)
+    return require("./llm-front-office/conversation-manager.cjs").validateExperimentalConversation(
+      value,
+    );
   if (value?.agentKnowledge) {
     require("./schemas.cjs").parse(
       require("./agent-construction.cjs").constructionSourceSchema,
@@ -155,6 +159,36 @@ function validateConversation(value) {
 }
 
 function applyRun(conversation, attempt, record) {
+  if (conversation.schemaVersion === 5) {
+    if (
+      record.schemaVersion !== 3 ||
+      record.conversationId !== conversation.id ||
+      record.runId !== attempt.runId ||
+      record.requestId !== attempt.requestId
+    )
+      throw new ModelRuntimeError(
+        "MODEL_STORAGE_INVALID",
+        "Experimental run does not belong to this chat.",
+      );
+    attempt.status = record.status;
+    attempt.error = record.error;
+    if (
+      record.status === "succeeded" &&
+      !conversation.messages.some((m) => m.runId === record.runId)
+    )
+      conversation.messages.push({
+        id: randomUUID(),
+        conversationId: conversation.id,
+        role: "assistant",
+        content: record.response,
+        createdAt: record.completedAt,
+        runId: record.runId,
+        userMessageId: attempt.userMessageId,
+        model: record.model,
+        provider: record.provider,
+      });
+    return;
+  }
   attempt.status = record.status;
   attempt.error = record.error;
   if (
@@ -283,6 +317,25 @@ class ConversationStore {
       return value;
     });
   }
+  /** Create an explicitly isolated experiment in the same durable store. */
+  createExperimental(selection = null) {
+    return this.queue(async () => {
+      const timestamp = new Date().toISOString();
+      const value = {
+        schemaVersion: 5,
+        mode: "front-office",
+        id: randomUUID(),
+        title: "Experimental chat",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        selection,
+        messages: [],
+        attempts: [],
+      };
+      await this.write(value);
+      return value;
+    });
+  }
   remove(id) {
     return this.queue(async () => {
       await this.read(id);
@@ -303,8 +356,11 @@ class ConversationStore {
             const run = await this.readRun(attempt.runId);
             if (
               run.conversationId !== conversation.id ||
-              run.contextIdentity?.id !==
-                (attempt.contextIdentity ?? conversation.contextIdentity).id
+              (conversation.schemaVersion !== 5 &&
+                run.contextIdentity?.id !==
+                  (attempt.contextIdentity ?? conversation.contextIdentity)
+                    .id) ||
+              (conversation.schemaVersion === 5 && run.schemaVersion !== 3)
             )
               throw new ModelRuntimeError(
                 "MODEL_STORAGE_INVALID",

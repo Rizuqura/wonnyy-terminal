@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { FrontOfficeSettings } from "./front-office-settings";
 import { contextLimit } from "../../electron/ai/context-limits.cjs";
 import type { ChatController } from "../chat/use-chat-runtime";
 import type {
@@ -145,6 +146,7 @@ export function ModelSettings({
             Back to workspace <span aria-hidden="true">↗</span>
           </button>
         </header>
+        <FrontOfficeSettings hasVault={Boolean(vaultPath)} />
         {chat.agent?.runtimeModel.modelId && (
           <p className="ai-privacy">
             {chat.agent.displayName} uses {chat.agent.runtimeModel.providerId} /{" "}
